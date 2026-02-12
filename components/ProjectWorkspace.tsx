@@ -1,16 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Folder, TerminalSquare, FileText, ChevronLeft } from "lucide-react";
+import { Folder, TerminalSquare, FileText, MessageSquare, ChevronLeft } from "lucide-react";
 import { LogoutButton } from "./LogoutButton";
 import { FileBrowser } from "./FileBrowser";
 import { FileViewer } from "./FileViewer";
 import { Terminal } from "./Terminal";
+import { ChatInterface } from "./ChatInterface";
 
-type Tab = "browse" | "terminal" | "file";
+type Tab = "browse" | "chat" | "terminal" | "file";
 
 const tabs = [
   { id: "browse" as const, label: "Browse", icon: Folder },
+  { id: "chat" as const, label: "Chat", icon: MessageSquare },
   { id: "terminal" as const, label: "Terminal", icon: TerminalSquare },
   { id: "file" as const, label: "File", icon: FileText },
 ];
@@ -54,11 +56,13 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
       ? browsePath === projectPath
         ? projectName
         : browsePath.split("/").pop() || projectName
-      : activeTab === "terminal"
-        ? `Terminal - ${projectName}`
-        : viewingFile
-          ? viewingFile.split("/").pop() || "File"
-          : "File";
+      : activeTab === "chat"
+        ? `Chat - ${projectName}`
+        : activeTab === "terminal"
+          ? `Terminal - ${projectName}`
+          : viewingFile
+            ? viewingFile.split("/").pop() || "File"
+            : "File";
 
   return (
     <div className="flex flex-col h-[100dvh]">
@@ -81,6 +85,10 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
             onFileSelect={handleFileSelect}
             onNavigate={handleNavigate}
           />
+        </div>
+
+        <div className={`absolute inset-0 ${activeTab !== "chat" ? "hidden" : ""}`}>
+          <ChatInterface projectPath={projectPath} projectName={projectName} />
         </div>
 
         <div className={`absolute inset-0 ${activeTab !== "terminal" ? "hidden" : ""}`}>
