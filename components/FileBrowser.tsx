@@ -20,6 +20,8 @@ interface FileEntry {
 
 interface FileBrowserProps {
   path: string;
+  onFileSelect?: (filePath: string) => void;
+  onNavigate?: (dirPath: string) => void;
 }
 
 const CODE_EXTENSIONS = new Set([
@@ -39,7 +41,8 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileBrowser({ path }: FileBrowserProps) {
+export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps) {
+  const isEmbedded = !!(onFileSelect || onNavigate);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,13 +95,13 @@ export function FileBrowser({ path }: FileBrowserProps) {
 
   return (
     <div>
-      {isProject && (
+      {isProject && !isEmbedded && (
         <Link
-          href={`/chat/${encodeURIComponent(path)}`}
+          href={`/project/${encodeURIComponent(path)}`}
           className="flex items-center gap-3 px-4 py-3 mb-2 bg-accent/10 border border-accent/30 rounded-lg text-accent hover:bg-accent/20 transition-colors"
         >
           <MessageSquare size={20} />
-          <span className="font-medium">Open Claude Code</span>
+          <span className="font-medium">Open Project Workspace</span>
           <ChevronRight size={16} className="ml-auto" />
         </Link>
       )}
@@ -107,10 +110,46 @@ export function FileBrowser({ path }: FileBrowserProps) {
         {entries.map((entry) => {
           const Icon =
             entry.type === "directory" ? Folder : getFileIcon(entry.name);
+          const entryPath = path ? path + "/" + entry.name : entry.name;
+
+          if (isEmbedded) {
+            const handleClick = () => {
+              if (entry.type === "directory") {
+                onNavigate?.(entryPath);
+              } else {
+                onFileSelect?.(entryPath);
+              }
+            };
+
+            return (
+              <button
+                key={entry.name}
+                onClick={handleClick}
+                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-card active:bg-card/80 transition-colors text-left"
+              >
+                <Icon
+                  size={20}
+                  className={
+                    entry.type === "directory" ? "text-accent" : "text-muted"
+                  }
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="truncate font-medium">{entry.name}</div>
+                  {entry.type === "file" && (
+                    <div className="text-xs text-muted">
+                      {formatSize(entry.size)}
+                    </div>
+                  )}
+                </div>
+                <ChevronRight size={16} className="text-muted shrink-0" />
+              </button>
+            );
+          }
+
           const href =
             entry.type === "directory"
-              ? `/browse/${path ? path + "/" : ""}${entry.name}`
-              : `/browse/${path ? path + "/" : ""}${entry.name}?view=true`;
+              ? `/browse/${entryPath}`
+              : `/browse/${entryPath}?view=true`;
 
           return (
             <Link

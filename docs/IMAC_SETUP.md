@@ -19,7 +19,7 @@ sudo cloudflared service install eyJhIjoiZWE4NjA0NWZjY2ViYjVhNGRmOTMyOWExNzllMTI
 
 ### 3. Verify BASE_DIR in cc-server/.env
 
-The `.env` syncs via Syncthing. If your iMac username is different, update `BASE_DIR` to match:
+The `.env` syncs via Syncthing. If your iMac username is different, updaSE_DIR` to match:
 
 ```bash
 whoami
