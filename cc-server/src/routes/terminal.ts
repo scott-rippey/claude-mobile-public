@@ -79,7 +79,7 @@ router.post("/", (req, res) => {
   });
 
   // Kill child process if client disconnects
-  req.on("close", () => {
+  res.on("close", () => {
     console.error("[terminal] Client disconnected");
     if (!child.killed) {
       child.kill("SIGTERM");

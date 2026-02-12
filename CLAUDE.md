@@ -7,7 +7,7 @@ Remote Claude Code interface — access Claude Agent SDK and your iMac's file sy
 ```
 Phone → Vercel (Next.js + Google Auth)
   → API proxy routes → Cloudflare Tunnel
-    → iMac Express server (cc-server, port 3002)
+    → iMac Express server (cc-server, port 3020)
       → Claude Agent SDK + file system access
 ```
 
@@ -19,7 +19,7 @@ Phone → Vercel (Next.js + Google Auth)
 - **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage
 
 ### Backend (`cc-server/` — runs on iMac only)
-- **Express** server on port 3002
+- **Express** server on port 3020
 - **Auth middleware** validates shared secret from Vercel API routes
 - **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/terminal` (SSE streaming)
 - **Claude Agent SDK** integration for chat
@@ -67,4 +67,4 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 - `SHARED_SECRET` — must match Vercel's value
 - `ANTHROPIC_API_KEY` — Claude API key
 - `BASE_DIR` — root directory for file browsing and terminal (e.g. `/Users/scottrippey/App Development`)
-- `PORT` — defaults to 3002
+- `PORT` — defaults to 3020

@@ -10,16 +10,16 @@ TUNNEL_TOKEN="eyJhIjoiZWE4NjA0NWZjY2ViYjVhNGRmOTMyOWExNzllMTI0MTUiLCJ0IjoiYWNlYW
 cleanup() {
   echo "Shutting down..."
   kill $TUNNEL_PID 2>/dev/null
-  # Kill any cc-server still on port 3002
-  lsof -ti :3002 | xargs kill 2>/dev/null
+  # Kill any cc-server still on port 3020
+  lsof -ti :3020 | xargs kill 2>/dev/null
   exit 0
 }
 trap cleanup SIGINT SIGTERM
 
-# Kill anything already on port 3002
-EXISTING=$(lsof -ti :3002)
+# Kill anything already on port 3020
+EXISTING=$(lsof -ti :3020)
 if [ -n "$EXISTING" ]; then
-  echo "Port 3002 in use (PID $EXISTING) — killing..."
+  echo "Port 3020 in use (PID $EXISTING) — killing..."
   echo "$EXISTING" | xargs kill -9 2>/dev/null
   sleep 1
 fi
@@ -41,7 +41,7 @@ while true; do
   echo "CC Server exited with code $EXIT_CODE"
   if [ $EXIT_CODE -eq 1 ]; then
     # Might be EADDRINUSE — kill stale process
-    lsof -ti :3002 | xargs kill -9 2>/dev/null
+    lsof -ti :3020 | xargs kill -9 2>/dev/null
   fi
   echo "Restarting in 3 seconds... (Ctrl+C to stop)"
   sleep 3

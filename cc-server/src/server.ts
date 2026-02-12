@@ -8,7 +8,7 @@ import chatRouter from "./routes/chat.js";
 import terminalRouter from "./routes/terminal.js";
 
 const app = express();
-const port = parseInt(process.env.PORT || "3001", 10);
+const port = parseInt(process.env.PORT || "3020", 10);
 
 app.use(cors());
 app.use(express.json());
