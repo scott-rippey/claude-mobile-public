@@ -16,13 +16,13 @@ export async function middleware(request: NextRequest) {
   }
 
   // Skip auth check in development if no AUTH_SECRET is set
-  if (!process.env.AUTH_SECRET) {
+  if (!process.env.NEXTAUTH_SECRET) {
     return NextResponse.next();
   }
 
   const token = await getToken({
     req: request,
-    secret: process.env.AUTH_SECRET,
+    secret: process.env.NEXTAUTH_SECRET,
   });
 
   if (!token) {
