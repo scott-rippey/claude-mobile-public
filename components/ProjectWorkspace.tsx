@@ -93,7 +93,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
         </div>
 
         <div className={`absolute inset-0 ${activeTab !== "chat" ? "hidden" : ""}`}>
-          <ChatInterface projectPath={projectPath} projectName={projectName} />
+          <ChatInterface projectPath={projectPath} projectName={projectName} embedded />
         </div>
 
         <div className={`absolute inset-0 ${activeTab !== "terminal" ? "hidden" : ""}`}>

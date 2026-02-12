@@ -16,11 +16,13 @@ interface MessageBlock {
 interface ChatInterfaceProps {
   projectPath: string;
   projectName: string;
+  embedded?: boolean;
 }
 
 export function ChatInterface({
   projectPath,
   projectName,
+  embedded = false,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<MessageBlock[]>([]);
   const [input, setInput] = useState("");
@@ -45,6 +47,30 @@ export function ChatInterface({
   const sendMessage = async () => {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
+
+    // Handle client-side slash commands
+    if (trimmed.startsWith("/")) {
+      const cmd = trimmed.split(" ")[0].toLowerCase();
+      if (cmd === "/clear") {
+        startNewConversation();
+        setInput("");
+        return;
+      }
+      if (cmd === "/help") {
+        setInput("");
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "user", content: trimmed },
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content:
+              "**Available commands:**\n- `/clear` — Start a new conversation\n- `/help` — Show this message\n\nEverything else is sent to Claude.",
+          },
+        ]);
+        return;
+      }
+    }
 
     const userMessage: MessageBlock = {
       id: crypto.randomUUID(),
@@ -183,21 +209,23 @@ export function ChatInterface({
   };
 
   return (
-    <div className="flex flex-col h-[100dvh]">
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-        <div className="min-w-0">
-          <h1 className="text-sm font-semibold truncate">{projectName}</h1>
-          <p className="text-xs text-muted truncate">Claude Code</p>
-        </div>
-        <button
-          onClick={startNewConversation}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors shrink-0"
-        >
-          <Plus size={14} />
-          New
-        </button>
-      </header>
+    <div className={`flex flex-col ${embedded ? "h-full" : "h-[100dvh]"}`}>
+      {/* Header — hidden when embedded in ProjectWorkspace */}
+      {!embedded && (
+        <header className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+          <div className="min-w-0">
+            <h1 className="text-sm font-semibold truncate">{projectName}</h1>
+            <p className="text-xs text-muted truncate">Claude Code</p>
+          </div>
+          <button
+            onClick={startNewConversation}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors shrink-0"
+          >
+            <Plus size={14} />
+            New
+          </button>
+        </header>
+      )}
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
