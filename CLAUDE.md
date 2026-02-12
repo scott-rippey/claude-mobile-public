@@ -12,17 +12,19 @@ Phone → Vercel (Next.js + Google Auth)
 ```
 
 ### Frontend (root — deploys to Vercel)
-- **Next.js 16** app with Tailwind CSS
+- **Next.js 15.5.12** app with Tailwind CSS (downgraded from 16 — v16 broke middleware auth)
 - **NextAuth** with Google OAuth (only authorized users)
 - **API routes** (`app/api/`) proxy requests to cc-server through Cloudflare Tunnel
-- **Pages:** File browser, file viewer, chat interface
-- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, CodeBlock, StreamingMessage
+- **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/terminal/file)
+- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage
 
 ### Backend (`cc-server/` — runs on iMac only)
 - **Express** server on port 3002
 - **Auth middleware** validates shared secret from Vercel API routes
-- **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming)
+- **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/terminal` (SSE streaming)
 - **Claude Agent SDK** integration for chat
+- Runs TypeScript directly via `tsx` — no build/compile step needed
+- `Start CC Server.command` starts both Cloudflare tunnel and server with auto-restart
 - NOT deployed to Vercel — this subfolder runs locally on the iMac
 - Has its own `package.json`, `tsconfig.json`, and `node_modules`
 
@@ -64,4 +66,5 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 ### cc-server (.env on iMac)
 - `SHARED_SECRET` — must match Vercel's value
 - `ANTHROPIC_API_KEY` — Claude API key
+- `BASE_DIR` — root directory for file browsing and terminal (e.g. `/Users/scottrippey/App Development`)
 - `PORT` — defaults to 3002
