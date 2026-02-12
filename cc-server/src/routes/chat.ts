@@ -103,57 +103,90 @@ router.post("/", async (req, res) => {
     });
 
     for await (const msg of response) {
-      console.error(`[chat] msg.type=${msg.type}`);
+      const m = msg as any;
+      console.error(`[chat] msg.type=${msg.type}${m.subtype ? ` subtype=${m.subtype}` : ""}`);
 
-      // Extract session_id from any message
-      if ("session_id" in msg && msg.session_id) {
-        sendEvent("init", { sessionId: msg.session_id });
-      }
-
-      if (msg.type === "assistant") {
-        // Process content blocks
-        for (const block of msg.message.content) {
-          console.error(`[chat]   block.type=${block.type}`);
-          if (block.type === "text") {
-            sendEvent("assistant", { text: block.text });
-          } else if (block.type === "tool_use") {
-            sendEvent("tool_call", {
-              name: block.name,
-              input: block.input,
-              id: block.id,
+      switch (msg.type) {
+        case "system": {
+          if (m.subtype === "init") {
+            sendEvent("init", {
+              sessionId: m.session_id,
+              tools: m.tools,
+              mcpServers: m.mcp_servers,
+              model: m.model,
+              permissionMode: m.permissionMode,
+              slashCommands: m.slash_commands,
+              skills: m.skills,
+              plugins: m.plugins,
+              agents: m.agents,
+              claudeCodeVersion: m.claude_code_version,
+              cwd: m.cwd,
             });
+          } else if (m.subtype === "status") {
+            sendEvent("status", { status: m.status });
           }
+          break;
         }
-      }
 
-      if (msg.type === "user") {
-        // Tool results — extract from message.content blocks
-        for (const block of (msg as any).message.content) {
-          if (block.type === "tool_result") {
-            // Content can be string or array of content blocks
-            let content = "";
-            if (typeof block.content === "string") {
-              content = block.content;
-            } else if (Array.isArray(block.content)) {
-              content = block.content
-                .map((b: any) => (b.type === "text" ? b.text : ""))
-                .join("\n");
+        case "assistant": {
+          for (const block of msg.message.content) {
+            console.error(`[chat]   block.type=${block.type}`);
+            if (block.type === "text") {
+              sendEvent("assistant", { text: block.text });
+            } else if (block.type === "tool_use") {
+              sendEvent("tool_call", {
+                name: block.name,
+                input: block.input,
+                id: block.id,
+              });
             }
-            sendEvent("tool_result", {
-              toolUseId: block.tool_use_id,
-              content,
-            });
           }
+          break;
         }
-      }
 
-      if (msg.type === "result") {
-        sendEvent("result", {
-          result: (msg as any).result,
-          totalCostUsd: (msg as any).total_cost_usd,
-          durationMs: (msg as any).duration_ms,
-          sessionId: (msg as any).session_id,
-        });
+        case "user": {
+          // Tool results — extract from message.content blocks
+          for (const block of m.message.content) {
+            if (block.type === "tool_result") {
+              let content = "";
+              if (typeof block.content === "string") {
+                content = block.content;
+              } else if (Array.isArray(block.content)) {
+                content = block.content
+                  .map((b: any) => (b.type === "text" ? b.text : ""))
+                  .join("\n");
+              }
+              sendEvent("tool_result", {
+                toolUseId: block.tool_use_id,
+                content,
+              });
+            }
+          }
+          break;
+        }
+
+        case "tool_progress": {
+          sendEvent("tool_progress", {
+            toolUseId: m.tool_use_id,
+            toolName: m.tool_name,
+            elapsedSeconds: m.elapsed_time_seconds,
+          });
+          break;
+        }
+
+        case "result": {
+          sendEvent("result", {
+            subtype: m.subtype,
+            result: m.result,
+            errors: m.errors,
+            isError: m.is_error,
+            numTurns: m.num_turns,
+            totalCostUsd: m.total_cost_usd,
+            durationMs: m.duration_ms,
+            sessionId: m.session_id,
+          });
+          break;
+        }
       }
     }
 

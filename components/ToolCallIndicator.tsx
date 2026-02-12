@@ -17,6 +17,7 @@ interface ToolCallIndicatorProps {
   name: string;
   input: Record<string, unknown>;
   result?: string;
+  elapsedSeconds?: number;
 }
 
 const TOOL_ICONS: Record<string, typeof FileText> = {
@@ -57,7 +58,7 @@ function shortPath(filepath: string | undefined): string {
   return parts.length > 2 ? `.../${parts.slice(-2).join("/")}` : filepath;
 }
 
-export function ToolCallIndicator({ name, input, result }: ToolCallIndicatorProps) {
+export function ToolCallIndicator({ name, input, result, elapsedSeconds }: ToolCallIndicatorProps) {
   const [expanded, setExpanded] = useState(false);
   const [showFullResult, setShowFullResult] = useState(false);
   const Icon = TOOL_ICONS[name] || Terminal;
@@ -114,7 +115,7 @@ export function ToolCallIndicator({ name, input, result }: ToolCallIndicatorProp
           {!hasResult && (
             <div className="flex items-center gap-1.5 mt-2 text-muted">
               <Loader2 size={12} className="animate-spin" />
-              Running...
+              Running{elapsedSeconds ? ` (${Math.round(elapsedSeconds)}s)` : ""}...
             </div>
           )}
         </div>
