@@ -39,21 +39,6 @@ export function Terminal({ projectPath }: TerminalProps) {
     abortRef.current?.abort();
   }, []);
 
-  const markDone = useCallback((id: number, output: string, exitCode: number) => {
-    setEntries((prev) =>
-      prev.map((e) => {
-        if (e.id !== id) return e;
-        const finalOutput = e.output + output;
-        return {
-          ...e,
-          output: finalOutput || (exitCode !== 0 ? "[command failed]" : ""),
-          running: false,
-          exitCode,
-        };
-      })
-    );
-  }, []);
-
   const executeCommand = useCallback(
     async (command: string) => {
       const id = nextId.current++;
@@ -69,7 +54,6 @@ export function Terminal({ projectPath }: TerminalProps) {
       abortRef.current = controller;
 
       try {
-        console.error("[terminal] fetching:", command);
         const res = await fetch("/api/terminal/exec", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -77,93 +61,55 @@ export function Terminal({ projectPath }: TerminalProps) {
           signal: controller.signal,
         });
 
-        console.error("[terminal] response status:", res.status);
+        const rawText = await res.text();
+        let output: string;
+        let exitCode: number;
 
-        if (!res.ok) {
-          // Read body as text first — can only consume once
-          const rawBody = await res.text();
-          let errorMsg = `HTTP ${res.status}`;
-          try {
-            const data = JSON.parse(rawBody);
-            errorMsg = data.error || errorMsg;
-          } catch {
-            errorMsg = rawBody || errorMsg;
-          }
-          markDone(id, errorMsg, 1);
-          return;
+        try {
+          const data = JSON.parse(rawText);
+          output = data.output ?? "";
+          exitCode = data.exitCode ?? 1;
+        } catch {
+          output = rawText || `HTTP ${res.status}`;
+          exitCode = 1;
         }
 
-        const reader = res.body?.getReader();
-        if (!reader) {
-          markDone(id, "No response body", 1);
-          return;
-        }
-
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let gotExit = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === "stdout" || event.type === "stderr") {
-                setEntries((prev) =>
-                  prev.map((e) =>
-                    e.id === id ? { ...e, output: e.output + event.data } : e
-                  )
-                );
-              } else if (event.type === "exit") {
-                gotExit = true;
-                setEntries((prev) =>
-                  prev.map((e) =>
-                    e.id === id
-                      ? { ...e, running: false, exitCode: event.data.code }
-                      : e
-                  )
-                );
-              } else if (event.type === "error") {
-                gotExit = true;
-                markDone(id, event.data.message, 1);
-              }
-            } catch {
-              // ignore malformed SSE lines
-            }
-          }
-        }
-
-        // If stream ended without an exit event, mark as done
-        if (!gotExit) {
-          console.error("[terminal] stream ended without exit event");
-          markDone(id, "", 1);
-        }
+        setEntries((prev) =>
+          prev.map((e) =>
+            e.id === id
+              ? {
+                  ...e,
+                  output: output || (exitCode !== 0 ? "[command failed]" : "[no output]"),
+                  running: false,
+                  exitCode,
+                }
+              : e
+          )
+        );
       } catch (err: unknown) {
-        console.error("[terminal] error:", err);
+        let msg: string;
         if (err instanceof DOMException && err.name === "AbortError") {
-          markDone(id, "\n[killed]", 130);
+          msg = "[killed]";
         } else {
-          const msg = err instanceof Error ? err.message : "Connection error";
-          markDone(id, msg, 1);
+          msg = err instanceof Error ? err.message : "Connection error";
         }
+        setEntries((prev) =>
+          prev.map((e) =>
+            e.id === id
+              ? { ...e, output: msg, running: false, exitCode: 130 }
+              : e
+          )
+        );
       }
 
       abortRef.current = null;
     },
-    [projectPath, markDone]
+    [projectPath]
   );
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const trimmed = input.trim();
-    console.error("[terminal] submit:", trimmed, "isRunning:", isRunning);
     if (!trimmed || isRunning) return;
     setInput("");
     executeCommand(trimmed);
