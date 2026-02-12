@@ -51,25 +51,23 @@ export function ChatInterface({
     // Handle client-side slash commands
     if (trimmed.startsWith("/")) {
       const cmd = trimmed.split(" ")[0].toLowerCase();
+      setInput("");
       if (cmd === "/clear") {
         startNewConversation();
-        setInput("");
         return;
       }
-      if (cmd === "/help") {
-        setInput("");
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "user", content: trimmed },
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content:
-              "**Available commands:**\n- `/clear` — Start a new conversation\n- `/help` — Show this message\n\nEverything else is sent to Claude.",
-          },
-        ]);
-        return;
-      }
+      const helpText =
+        "**Available commands:**\n- `/clear` — Start a new conversation\n- `/help` — Show this message";
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "user", content: trimmed },
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: cmd === "/help" ? helpText : `Unknown command: \`${cmd}\`\n\n${helpText}`,
+        },
+      ]);
+      return;
     }
 
     const userMessage: MessageBlock = {
