@@ -16,20 +16,26 @@ export function FileViewer({ path }: FileViewerProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     fetch(`/api/file?path=${encodeURIComponent(path)}`)
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         if (data.error) {
           setError(data.error);
         } else {
+          setError(null);
           setContent(data.content);
           setLanguage(data.language);
         }
       })
-      .catch(() => setError("Failed to load file"))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setError("Failed to load file");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [path]);
 
   if (loading) {

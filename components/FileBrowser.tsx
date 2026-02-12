@@ -45,19 +45,26 @@ export function FileBrowser({ path }: FileBrowserProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     fetch(`/api/files?path=${encodeURIComponent(path)}`)
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         if (data.error) {
           setError(data.error);
+          setEntries([]);
         } else {
+          setError(null);
           setEntries(data.entries);
         }
       })
-      .catch(() => setError("Failed to load directory"))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setError("Failed to load directory");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [path]);
 
   if (loading) {

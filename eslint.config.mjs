@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // cc-server has its own tsconfig and deps
+    "cc-server/**",
   ]),
 ]);
 
