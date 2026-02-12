@@ -12,14 +12,14 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
-      // Try JSON first, fall back to text
+      // Read body as text first (can only consume once), then try JSON
+      const rawBody = await res.text();
       let errorData: string;
       try {
-        const data = await res.json();
+        const data = JSON.parse(rawBody);
         errorData = JSON.stringify(data);
       } catch {
-        const text = await res.text();
-        errorData = JSON.stringify({ error: text || `Server error ${res.status}` });
+        errorData = JSON.stringify({ error: rawBody || `Server error ${res.status}` });
       }
       return new Response(errorData, {
         status: res.status,

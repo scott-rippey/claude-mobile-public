@@ -41,9 +41,16 @@ export function Terminal({ projectPath }: TerminalProps) {
 
   const markDone = useCallback((id: number, output: string, exitCode: number) => {
     setEntries((prev) =>
-      prev.map((e) =>
-        e.id === id ? { ...e, output: e.output + output, running: false, exitCode } : e
-      )
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        const finalOutput = e.output + output;
+        return {
+          ...e,
+          output: finalOutput || (exitCode !== 0 ? "[command failed]" : ""),
+          running: false,
+          exitCode,
+        };
+      })
     );
   }, []);
 
