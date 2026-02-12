@@ -39,6 +39,12 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
   const projectName = projectPath.split("/").pop() || projectPath;
   const canGoBack = browsePath !== projectPath;
 
+  // Parent directory URL for exiting the workspace (go up one level from project root)
+  const projectParts = projectPath.split("/");
+  const parentBrowseUrl = projectParts.length > 1
+    ? `/browse/${projectParts.slice(0, -1).map(s => encodeURIComponent(s)).join("/")}`
+    : "/browse";
+
   const handleBack = () => {
     const parts = browsePath.split("/");
     parts.pop();
@@ -69,10 +75,16 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
     <div className="flex flex-col h-[100dvh]">
       {/* Header */}
       <header className="flex items-center gap-2 border-b border-border bg-background/80 backdrop-blur-md px-3 py-2.5 shrink-0">
-        {activeTab === "browse" && canGoBack ? (
-          <button onClick={handleBack} className="text-accent p-1">
-            <ChevronLeft size={20} />
-          </button>
+        {activeTab === "browse" ? (
+          canGoBack ? (
+            <button onClick={handleBack} className="text-accent p-1">
+              <ChevronLeft size={20} />
+            </button>
+          ) : (
+            <Link href={parentBrowseUrl} className="text-accent p-1">
+              <ChevronLeft size={20} />
+            </Link>
+          )
         ) : (
           <Link href="/browse" className="text-accent p-1">
             <Home size={18} />

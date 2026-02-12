@@ -15,7 +15,7 @@ Phone → Vercel (Next.js + Google Auth)
 - **Next.js 15.5.12** app with Tailwind CSS (downgraded from 16 — v16 broke middleware auth)
 - **NextAuth** with Google OAuth (only authorized users)
 - **API routes** (`app/api/`) proxy requests to cc-server through Cloudflare Tunnel
-- **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/terminal/file)
+- **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/chat/terminal/file)
 - **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage
 
 ### Backend (`cc-server/` — runs on iMac only)
@@ -25,6 +25,7 @@ Phone → Vercel (Next.js + Google Auth)
 - **Claude Agent SDK** integration for chat
 - Runs TypeScript directly via `tsx` — no build/compile step needed
 - `Start CC Server.command` starts both Cloudflare tunnel and server with auto-restart
+- `Start CC Server Local.command` starts server only (no tunnel) for local testing
 - NOT deployed to Vercel — this subfolder runs locally on the iMac
 - Has its own `package.json`, `tsconfig.json`, and `node_modules`
 
@@ -32,7 +33,8 @@ Phone → Vercel (Next.js + Google Auth)
 - `cc-server/` — excluded from root `tsconfig.json` and `eslint.config.mjs`
 - `.env.example` — variable names and examples (committed)
 - `cc-server/.env` — `SHARED_SECRET` and `ANTHROPIC_API_KEY` (not committed)
-- `Start CC Server.command` — macOS launcher for cc-server
+- `Start CC Server.command` — macOS launcher for cc-server (tunnel + server)
+- `Start CC Server Local.command` — local-only launcher (server only, no tunnel)
 - `docs/IMPLEMENTATION_PLAN.md` — checklist of all phases
 
 ## Environment Rules
