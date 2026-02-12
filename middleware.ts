@@ -15,9 +15,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Skip auth check in development if no AUTH_SECRET is set
+  // If NEXTAUTH_SECRET is not set, block access (misconfigured deploy)
   if (!process.env.NEXTAUTH_SECRET) {
-    return NextResponse.next();
+    const signInUrl = new URL("/auth/signin", request.url);
+    return NextResponse.redirect(signInUrl);
   }
 
   const token = await getToken({
