@@ -28,10 +28,16 @@ Phone → Vercel (Next.js + Google Auth)
 
 ### Key Files
 - `cc-server/` — excluded from root `tsconfig.json` and `eslint.config.mjs`
-- `.env.local` — `TUNNEL_URL` and `SHARED_SECRET` (not committed)
+- `.env.example` — variable names and examples (committed)
 - `cc-server/.env` — `SHARED_SECRET` and `ANTHROPIC_API_KEY` (not committed)
 - `Start CC Server.command` — macOS launcher for cc-server
 - `docs/IMPLEMENTATION_PLAN.md` — checklist of all phases
+
+## Environment Rules
+
+- **Never use `.env.local`** — all env vars go in Vercel dashboard only
+- `.env.example` is for documenting variable names — committed to git
+- For local dev, use `vercel env pull` or test against production
 
 ## Pre-Commit Rules
 
@@ -48,7 +54,7 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 ## Environment Variables
 
 ### Vercel (production)
-- `TUNNEL_URL` — Cloudflare Tunnel URL to iMac (e.g. `https://cc.yourdomain.com`)
+- `TUNNEL_URL` — Cloudflare Tunnel URL to iMac (`https://api.claudemobile.dev`)
 - `SHARED_SECRET` — shared auth token between Vercel and cc-server
 - `NEXTAUTH_SECRET` — NextAuth session encryption
 - `NEXTAUTH_URL` — Vercel app URL
