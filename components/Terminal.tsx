@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Square, Loader2 } from "lucide-react";
+import { Square, Loader2, Send } from "lucide-react";
 
 interface TerminalEntry {
   id: number;
@@ -235,16 +235,26 @@ export function Terminal({ projectPath }: TerminalProps) {
           disabled={isRunning}
           autoCapitalize="off"
           autoCorrect="off"
+          autoComplete="off"
           spellCheck={false}
+          enterKeyHint="send"
           className="flex-1 bg-transparent outline-none placeholder:text-muted/50 disabled:opacity-50"
         />
-        {isRunning && (
+        {isRunning ? (
           <button
             type="button"
             onClick={killProcess}
             className="p-1.5 text-red-400 hover:text-red-300"
           >
             <Square size={16} />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!input.trim()}
+            className="p-1.5 text-accent disabled:text-muted/30"
+          >
+            <Send size={16} />
           </button>
         )}
       </form>
