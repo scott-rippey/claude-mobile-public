@@ -12,8 +12,16 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
+      // Try JSON first, fall back to text
+      let errorData: string;
+      try {
+        const data = await res.json();
+        errorData = JSON.stringify(data);
+      } catch {
+        const text = await res.text();
+        errorData = JSON.stringify({ error: text || `Server error ${res.status}` });
+      }
+      return new Response(errorData, {
         status: res.status,
         headers: { "Content-Type": "application/json" },
       });
@@ -27,9 +35,10 @@ export async function POST(request: NextRequest) {
         Connection: "keep-alive",
       },
     });
-  } catch {
+  } catch (err) {
+    console.error("[terminal proxy] error:", err);
     return new Response(
-      JSON.stringify({ error: "Failed to connect to server" }),
+      JSON.stringify({ error: "Failed to connect to cc-server" }),
       { status: 502, headers: { "Content-Type": "application/json" } }
     );
   }

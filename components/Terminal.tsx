@@ -39,18 +39,22 @@ export function Terminal({ projectPath }: TerminalProps) {
     abortRef.current?.abort();
   }, []);
 
+  const markDone = useCallback((id: number, output: string, exitCode: number) => {
+    setEntries((prev) =>
+      prev.map((e) =>
+        e.id === id ? { ...e, output: e.output + output, running: false, exitCode } : e
+      )
+    );
+  }, []);
+
   const executeCommand = useCallback(
     async (command: string) => {
       const id = nextId.current++;
-      const entry: TerminalEntry = {
-        id,
-        command,
-        output: "",
-        exitCode: null,
-        running: true,
-      };
 
-      setEntries((prev) => [...prev, entry]);
+      setEntries((prev) => [
+        ...prev,
+        { id, command, output: "", exitCode: null, running: true },
+      ]);
       setCommandHistory((prev) => [...prev, command]);
       setHistoryIndex(-1);
 
@@ -58,6 +62,7 @@ export function Terminal({ projectPath }: TerminalProps) {
       abortRef.current = controller;
 
       try {
+        console.error("[terminal] fetching:", command);
         const res = await fetch("/api/terminal/exec", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -65,23 +70,33 @@ export function Terminal({ projectPath }: TerminalProps) {
           signal: controller.signal,
         });
 
+        console.error("[terminal] response status:", res.status);
+
         if (!res.ok) {
-          const data = await res.json();
-          setEntries((prev) =>
-            prev.map((e) =>
-              e.id === id
-                ? { ...e, output: data.error || "Request failed", running: false, exitCode: 1 }
-                : e
-            )
-          );
+          let errorMsg = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            errorMsg = data.error || errorMsg;
+          } catch {
+            try {
+              errorMsg = await res.text();
+            } catch {
+              // use default
+            }
+          }
+          markDone(id, errorMsg, 1);
           return;
         }
 
         const reader = res.body?.getReader();
-        if (!reader) return;
+        if (!reader) {
+          markDone(id, "No response body", 1);
+          return;
+        }
 
         const decoder = new TextDecoder();
         let buffer = "";
+        let gotExit = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -102,6 +117,7 @@ export function Terminal({ projectPath }: TerminalProps) {
                   )
                 );
               } else if (event.type === "exit") {
+                gotExit = true;
                 setEntries((prev) =>
                   prev.map((e) =>
                     e.id === id
@@ -110,47 +126,39 @@ export function Terminal({ projectPath }: TerminalProps) {
                   )
                 );
               } else if (event.type === "error") {
-                setEntries((prev) =>
-                  prev.map((e) =>
-                    e.id === id
-                      ? { ...e, output: e.output + event.data.message, running: false, exitCode: 1 }
-                      : e
-                  )
-                );
+                gotExit = true;
+                markDone(id, event.data.message, 1);
               }
             } catch {
               // ignore malformed SSE lines
             }
           }
         }
+
+        // If stream ended without an exit event, mark as done
+        if (!gotExit) {
+          console.error("[terminal] stream ended without exit event");
+          markDone(id, "", 1);
+        }
       } catch (err: unknown) {
+        console.error("[terminal] error:", err);
         if (err instanceof DOMException && err.name === "AbortError") {
-          setEntries((prev) =>
-            prev.map((e) =>
-              e.id === id
-                ? { ...e, output: e.output + "\n[killed]", running: false, exitCode: 130 }
-                : e
-            )
-          );
+          markDone(id, "\n[killed]", 130);
         } else {
-          setEntries((prev) =>
-            prev.map((e) =>
-              e.id === id
-                ? { ...e, output: "Connection error", running: false, exitCode: 1 }
-                : e
-            )
-          );
+          const msg = err instanceof Error ? err.message : "Connection error";
+          markDone(id, msg, 1);
         }
       }
 
       abortRef.current = null;
     },
-    [projectPath]
+    [projectPath, markDone]
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const trimmed = input.trim();
+    console.error("[terminal] submit:", trimmed, "isRunning:", isRunning);
     if (!trimmed || isRunning) return;
     setInput("");
     executeCommand(trimmed);
@@ -243,7 +251,10 @@ export function Terminal({ projectPath }: TerminalProps) {
         {isRunning ? (
           <button
             type="button"
-            onClick={killProcess}
+            onClick={(e) => {
+              e.stopPropagation();
+              killProcess();
+            }}
             className="p-1.5 text-red-400 hover:text-red-300"
           >
             <Square size={16} />
