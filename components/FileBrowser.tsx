@@ -1,0 +1,139 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  Folder,
+  FileText,
+  FileCode,
+  ChevronRight,
+  MessageSquare,
+  Loader2,
+} from "lucide-react";
+import Link from "next/link";
+
+interface FileEntry {
+  name: string;
+  type: "file" | "directory";
+  size: number;
+  modified: string;
+}
+
+interface FileBrowserProps {
+  path: string;
+}
+
+const CODE_EXTENSIONS = new Set([
+  "ts", "tsx", "js", "jsx", "json", "css", "scss", "html", "py",
+  "rs", "go", "sh", "sql", "graphql", "toml", "yaml", "yml",
+]);
+
+function getFileIcon(name: string) {
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  if (CODE_EXTENSIONS.has(ext)) return FileCode;
+  return FileText;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function FileBrowser({ path }: FileBrowserProps) {
+  const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetch(`/api/files?path=${encodeURIComponent(path)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) {
+          setError(data.error);
+        } else {
+          setEntries(data.entries);
+        }
+      })
+      .catch(() => setError("Failed to load directory"))
+      .finally(() => setLoading(false));
+  }, [path]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="animate-spin text-muted" size={24} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center py-20 text-red-400">
+        {error}
+      </div>
+    );
+  }
+
+  // Check if this looks like a project directory (has package.json, Cargo.toml, etc.)
+  const isProject = entries.some((e) =>
+    ["package.json", "Cargo.toml", "pyproject.toml", "go.mod", ".git"].includes(
+      e.name
+    )
+  );
+
+  return (
+    <div>
+      {isProject && (
+        <Link
+          href={`/chat/${encodeURIComponent(path)}`}
+          className="flex items-center gap-3 px-4 py-3 mb-2 bg-accent/10 border border-accent/30 rounded-lg text-accent hover:bg-accent/20 transition-colors"
+        >
+          <MessageSquare size={20} />
+          <span className="font-medium">Open Claude Code</span>
+          <ChevronRight size={16} className="ml-auto" />
+        </Link>
+      )}
+
+      <div className="divide-y divide-border">
+        {entries.map((entry) => {
+          const Icon =
+            entry.type === "directory" ? Folder : getFileIcon(entry.name);
+          const href =
+            entry.type === "directory"
+              ? `/browse/${path ? path + "/" : ""}${entry.name}`
+              : `/browse/${path ? path + "/" : ""}${entry.name}?view=true`;
+
+          return (
+            <Link
+              key={entry.name}
+              href={href}
+              className="flex items-center gap-3 px-4 py-3.5 hover:bg-card active:bg-card/80 transition-colors"
+            >
+              <Icon
+                size={20}
+                className={
+                  entry.type === "directory" ? "text-accent" : "text-muted"
+                }
+              />
+              <div className="flex-1 min-w-0">
+                <div className="truncate font-medium">{entry.name}</div>
+                {entry.type === "file" && (
+                  <div className="text-xs text-muted">
+                    {formatSize(entry.size)}
+                  </div>
+                )}
+              </div>
+              <ChevronRight size={16} className="text-muted shrink-0" />
+            </Link>
+          );
+        })}
+      </div>
+
+      {entries.length === 0 && (
+        <div className="text-center py-20 text-muted">Empty directory</div>
+      )}
+    </div>
+  );
+}
