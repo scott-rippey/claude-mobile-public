@@ -1,9 +1,53 @@
 import { Router } from "express";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import path from "path";
+import fs from "fs/promises";
+import os from "os";
 import type { ChatRequest } from "../types.js";
 
 const router = Router();
+
+/**
+ * Expand slash commands by reading .md files from project or user command dirs.
+ * Returns the expanded prompt, or the original message if no command matched.
+ */
+async function expandSlashCommand(
+  message: string,
+  cwd: string
+): Promise<string> {
+  if (!message.startsWith("/")) return message;
+
+  // Parse: /cmdName arg1 arg2...
+  const match = message.match(/^\/(\S+)\s*(.*)/s);
+  if (!match) return message;
+
+  const [, cmdName, args] = match;
+
+  // Search locations in priority order: project-level, then user-level
+  const searchPaths = [
+    path.join(cwd, ".claude", "commands", `${cmdName}.md`),
+    path.join(os.homedir(), ".claude", "commands", `${cmdName}.md`),
+  ];
+
+  for (const cmdPath of searchPaths) {
+    try {
+      const content = await fs.readFile(cmdPath, "utf-8");
+
+      // Strip YAML frontmatter (--- ... ---)
+      const stripped = content.replace(/^---\n[\s\S]*?\n---\n*/, "");
+
+      // Replace $ARGUMENTS placeholder with actual args
+      const expanded = stripped.replace(/\$ARGUMENTS/g, args.trim());
+
+      return expanded;
+    } catch {
+      // File not found, try next location
+    }
+  }
+
+  // No command file found — pass through as-is
+  return message;
+}
 
 // POST /api/chat — SSE streaming response
 router.post("/", async (req, res) => {
@@ -35,11 +79,28 @@ router.post("/", async (req, res) => {
   };
 
   try {
+    // Expand slash commands (e.g. /catchup → full prompt from .md file)
+    const prompt = await expandSlashCommand(message, cwd);
+
     const response = query({
-      prompt: message,
+      prompt,
       options: {
         cwd,
         ...(sessionId ? { resume: sessionId } : {}),
+        systemPrompt: {
+          type: "preset" as const,
+          preset: "claude_code" as const,
+        },
+        // Only load project settings (CLAUDE.md) — "user" and "local" pull in
+        // plugins, hooks, and MCP servers designed for interactive terminal use
+        // that hang when run headlessly via the SDK.
+        settingSources: ["project"] as const,
+        mcpServers: {
+          context7: {
+            command: "npx",
+            args: ["-y", "@upstash/context7-mcp"],
+          },
+        },
         allowedTools: [
           "Read",
           "Edit",
@@ -48,6 +109,12 @@ router.post("/", async (req, res) => {
           "Glob",
           "Grep",
           "MultiEdit",
+          "Skill",
+          "Task",
+          "WebFetch",
+          "WebSearch",
+          "NotebookEdit",
+          "mcp__context7__*",
         ],
         permissionMode: "acceptEdits",
         model: "claude-opus-4-6",
@@ -55,6 +122,8 @@ router.post("/", async (req, res) => {
     });
 
     for await (const msg of response) {
+      console.error(`[chat] msg.type=${msg.type}`);
+
       // Extract session_id from any message
       if ("session_id" in msg && msg.session_id) {
         sendEvent("init", { sessionId: msg.session_id });
@@ -63,6 +132,7 @@ router.post("/", async (req, res) => {
       if (msg.type === "assistant") {
         // Process content blocks
         for (const block of msg.message.content) {
+          console.error(`[chat]   block.type=${block.type}`);
           if (block.type === "text") {
             sendEvent("assistant", { text: block.text });
           } else if (block.type === "tool_use") {
