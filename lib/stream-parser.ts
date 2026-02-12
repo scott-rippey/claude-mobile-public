@@ -1,5 +1,5 @@
 export interface SSEMessage {
-  type: "init" | "assistant" | "tool_call" | "result" | "error" | "done";
+  type: "init" | "assistant" | "tool_call" | "tool_result" | "tool_progress" | "result" | "error" | "done";
   data: Record<string, unknown>;
 }
 

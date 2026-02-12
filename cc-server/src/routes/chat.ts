@@ -91,32 +91,13 @@ router.post("/", async (req, res) => {
           type: "preset" as const,
           preset: "claude_code" as const,
         },
-        // Only load project settings (CLAUDE.md) — "user" and "local" pull in
-        // plugins, hooks, and MCP servers designed for interactive terminal use
-        // that hang when run headlessly via the SDK.
-        settingSources: ["project"] as const,
-        mcpServers: {
-          context7: {
-            command: "npx",
-            args: ["-y", "@upstash/context7-mcp"],
-          },
-        },
-        allowedTools: [
-          "Read",
-          "Edit",
-          "Write",
-          "Bash",
-          "Glob",
-          "Grep",
-          "MultiEdit",
-          "Skill",
-          "Task",
-          "WebFetch",
-          "WebSearch",
-          "NotebookEdit",
-          "mcp__context7__*",
-        ],
-        permissionMode: "acceptEdits",
+        // Load all settings: project CLAUDE.md, user settings (~/.claude/),
+        // and local settings (.claude/settings.local.json) for MCP servers + plugins
+        settingSources: ["project", "user", "local"] as const,
+        // Headless SSE mode can't prompt for permissions — auto-approve everything.
+        // Personal tool behind Google OAuth + shared secret, same risk as local CLI.
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
         model: "claude-opus-4-6",
       },
     });
@@ -140,6 +121,27 @@ router.post("/", async (req, res) => {
               name: block.name,
               input: block.input,
               id: block.id,
+            });
+          }
+        }
+      }
+
+      if (msg.type === "user") {
+        // Tool results — extract from message.content blocks
+        for (const block of (msg as any).message.content) {
+          if (block.type === "tool_result") {
+            // Content can be string or array of content blocks
+            let content = "";
+            if (typeof block.content === "string") {
+              content = block.content;
+            } else if (Array.isArray(block.content)) {
+              content = block.content
+                .map((b: any) => (b.type === "text" ? b.text : ""))
+                .join("\n");
+            }
+            sendEvent("tool_result", {
+              toolUseId: block.tool_use_id,
+              content,
             });
           }
         }

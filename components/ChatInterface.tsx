@@ -10,7 +10,7 @@ interface MessageBlock {
   id: string;
   role: "user" | "assistant";
   content: string;
-  toolCalls?: { name: string; input: Record<string, unknown>; id: string }[];
+  toolCalls?: { name: string; input: Record<string, unknown>; id: string; result?: string }[];
 }
 
 interface ChatInterfaceProps {
@@ -143,6 +143,23 @@ export function ChatInterface({
             );
             break;
           }
+          case "tool_result": {
+            const toolUseId = event.data.toolUseId as string;
+            const content = event.data.content as string;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      toolCalls: m.toolCalls?.map((tc) =>
+                        tc.id === toolUseId ? { ...tc, result: content } : tc
+                      ),
+                    }
+                  : m
+              )
+            );
+            break;
+          }
           case "result": {
             // Result comes with final text; update if we have it
             const result = event.data.result as string | undefined;
@@ -252,6 +269,7 @@ export function ChatInterface({
                     key={tc.id}
                     name={tc.name}
                     input={tc.input}
+                    result={tc.result}
                   />
                 ))}
                 {/* Text content */}
