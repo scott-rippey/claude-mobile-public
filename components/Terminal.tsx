@@ -80,16 +80,14 @@ export function Terminal({ projectPath }: TerminalProps) {
         console.error("[terminal] response status:", res.status);
 
         if (!res.ok) {
+          // Read body as text first — can only consume once
+          const rawBody = await res.text();
           let errorMsg = `HTTP ${res.status}`;
           try {
-            const data = await res.json();
+            const data = JSON.parse(rawBody);
             errorMsg = data.error || errorMsg;
           } catch {
-            try {
-              errorMsg = await res.text();
-            } catch {
-              // use default
-            }
+            errorMsg = rawBody || errorMsg;
           }
           markDone(id, errorMsg, 1);
           return;

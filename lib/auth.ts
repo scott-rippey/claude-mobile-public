@@ -14,18 +14,6 @@ export const authOptions: NextAuthOptions = {
     strategy: "jwt",
     maxAge: 7 * 24 * 60 * 60, // 7 days
   },
-  cookies: {
-    sessionToken: {
-      name: "next-auth.session-token",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: process.env.NODE_ENV === "production",
-        // No maxAge = session cookie — deleted when browser is fully closed
-      },
-    },
-  },
   callbacks: {
     async signIn({ profile }) {
       const email = profile?.email?.toLowerCase();

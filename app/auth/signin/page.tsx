@@ -2,6 +2,7 @@
 
 import { signIn } from "next-auth/react";
 import { Terminal } from "lucide-react";
+import { markAuthValid } from "@/components/AuthGuard";
 
 export default function SignInPage() {
   return (
@@ -18,7 +19,10 @@ export default function SignInPage() {
         </div>
 
         <button
-          onClick={() => signIn("google", { callbackUrl: "/browse" })}
+          onClick={() => {
+            markAuthValid();
+            signIn("google", { callbackUrl: "/browse" });
+          }}
           className="w-full flex items-center justify-center gap-3 bg-white text-black rounded-xl px-6 py-3.5 font-medium hover:bg-gray-100 transition-colors"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">

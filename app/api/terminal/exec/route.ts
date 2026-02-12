@@ -2,7 +2,15 @@ import { NextRequest } from "next/server";
 import { serverFetch } from "@/lib/server-api";
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(
+      JSON.stringify({ error: "Invalid request body" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
   try {
     const res = await serverFetch("/api/terminal", {
@@ -12,19 +20,19 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
-      // Read body as text first (can only consume once), then try JSON
+      // Read body as text first — can only consume once
       const rawBody = await res.text();
-      let errorData: string;
+      let parsed: { error?: string } | null = null;
       try {
-        const data = JSON.parse(rawBody);
-        errorData = JSON.stringify(data);
+        parsed = JSON.parse(rawBody);
       } catch {
-        errorData = JSON.stringify({ error: rawBody || `Server error ${res.status}` });
+        // not JSON
       }
-      return new Response(errorData, {
-        status: res.status,
-        headers: { "Content-Type": "application/json" },
-      });
+      const errorMsg = parsed?.error || rawBody || `cc-server returned ${res.status}`;
+      return new Response(
+        JSON.stringify({ error: errorMsg }),
+        { status: res.status, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     // Pass through the SSE stream
@@ -37,8 +45,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     console.error("[terminal proxy] error:", err);
+    const msg = err instanceof Error ? err.message : "Unknown error";
     return new Response(
-      JSON.stringify({ error: "Failed to connect to cc-server" }),
+      JSON.stringify({ error: `Failed to connect to cc-server: ${msg}` }),
       { status: 502, headers: { "Content-Type": "application/json" } }
     );
   }

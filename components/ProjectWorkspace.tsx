@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Folder, TerminalSquare, FileText, ChevronLeft, LogOut } from "lucide-react";
 import { signOut } from "next-auth/react";
+import { clearAuthValid } from "./AuthGuard";
 import { FileBrowser } from "./FileBrowser";
 import { FileViewer } from "./FileViewer";
 import { Terminal } from "./Terminal";
@@ -71,7 +72,10 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
         )}
         <h1 className="text-sm font-medium truncate flex-1">{headerTitle}</h1>
         <button
-          onClick={() => signOut({ callbackUrl: "/auth/signin" })}
+          onClick={() => {
+            clearAuthValid();
+            signOut({ callbackUrl: "/auth/signin" });
+          }}
           className="text-muted hover:text-foreground p-1"
           title="Sign out"
         >
