@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Folder, TerminalSquare, FileText, MessageSquare, ChevronLeft } from "lucide-react";
+import Link from "next/link";
+import { Folder, TerminalSquare, FileText, MessageSquare, ChevronLeft, Home } from "lucide-react";
 import { LogoutButton } from "./LogoutButton";
 import { FileBrowser } from "./FileBrowser";
 import { FileViewer } from "./FileViewer";
@@ -68,10 +69,14 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
     <div className="flex flex-col h-[100dvh]">
       {/* Header */}
       <header className="flex items-center gap-2 border-b border-border bg-background/80 backdrop-blur-md px-3 py-2.5 shrink-0">
-        {activeTab === "browse" && canGoBack && (
+        {activeTab === "browse" && canGoBack ? (
           <button onClick={handleBack} className="text-accent p-1">
             <ChevronLeft size={20} />
           </button>
+        ) : (
+          <Link href="/browse" className="text-accent p-1">
+            <Home size={18} />
+          </Link>
         )}
         <h1 className="text-sm font-medium truncate flex-1">{headerTitle}</h1>
         <LogoutButton />
