@@ -6,7 +6,10 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return Response.json({ output: "", exitCode: 1, error: "Invalid request body" }, { status: 400 });
+    return Response.json(
+      { error: "Invalid request body" },
+      { status: 400 }
+    );
   }
 
   try {
@@ -17,6 +20,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
+      // Read body as text first — can only consume once
       const rawBody = await res.text();
       let errorMsg: string;
       try {
@@ -25,35 +29,28 @@ export async function POST(request: NextRequest) {
       } catch {
         errorMsg = rawBody || `cc-server returned ${res.status}`;
       }
-      return Response.json({ output: errorMsg, exitCode: 1 }, { status: 200 });
+      return Response.json({ error: errorMsg }, { status: res.status });
     }
 
-    // Consume the SSE stream server-side and collect output
-    const sseBody = await res.text();
-    let output = "";
-    let exitCode = 0;
-
-    for (const line of sseBody.split("\n")) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const event = JSON.parse(line.slice(6));
-        if (event.type === "stdout" || event.type === "stderr") {
-          output += event.data;
-        } else if (event.type === "exit") {
-          exitCode = event.data.code ?? 0;
-        } else if (event.type === "error") {
-          output += event.data.message || "Unknown error";
-          exitCode = 1;
-        }
-      } catch {
-        // skip malformed SSE lines
-      }
-    }
-
-    return Response.json({ output, exitCode });
+    // Pass through the SSE stream directly (same pattern as chat route)
+    return new Response(res.body, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   } catch (err) {
     console.error("[terminal proxy] error:", err);
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    return Response.json({ output: `Failed to connect to cc-server: ${msg}`, exitCode: 1 }, { status: 200 });
+    const isTimeout = err instanceof DOMException && err.name === "AbortError";
+    const msg = isTimeout
+      ? "cc-server is not reachable (connection timed out)"
+      : err instanceof Error
+        ? err.message
+        : "Unknown error";
+    return Response.json(
+      { error: `Failed to connect to cc-server: ${msg}` },
+      { status: 502 }
+    );
   }
 }

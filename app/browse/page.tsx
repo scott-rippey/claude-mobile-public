@@ -1,9 +1,6 @@
-"use client";
-
-import { signOut } from "next-auth/react";
 import { FileBrowser } from "@/components/FileBrowser";
-import { clearAuthValid } from "@/components/AuthGuard";
-import { Home, LogOut } from "lucide-react";
+import { LogoutButton } from "@/components/LogoutButton";
+import { Home } from "lucide-react";
 
 export default function BrowseRootPage() {
   return (
@@ -13,16 +10,7 @@ export default function BrowseRootPage() {
         <div className="flex items-center gap-2 text-sm">
           <Home size={16} className="text-accent" />
           <span className="font-semibold flex-1">App Development</span>
-          <button
-            onClick={() => {
-              clearAuthValid();
-              signOut({ callbackUrl: "/auth/signin" });
-            }}
-            className="text-muted hover:text-foreground p-1"
-            title="Sign out"
-          >
-            <LogOut size={18} />
-          </button>
+          <LogoutButton />
         </div>
       </header>
 

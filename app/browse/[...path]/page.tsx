@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronRight, Home } from "lucide-react";
 import { FileBrowser } from "@/components/FileBrowser";
 import { FileViewer } from "@/components/FileViewer";
+import { LogoutButton } from "@/components/LogoutButton";
 
 interface BrowsePageProps {
   params: Promise<{ path: string[] }>;
@@ -32,25 +33,28 @@ export default async function BrowsePage({
     <div className="min-h-[100dvh] flex flex-col">
       {/* Header with breadcrumbs */}
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border px-4 py-3">
-        <nav className="flex items-center gap-1 text-sm overflow-x-auto">
-          <Link
-            href="/browse"
-            className="text-muted hover:text-foreground transition-colors shrink-0"
-          >
-            <Home size={16} />
-          </Link>
-          {breadcrumbs.map((crumb) => (
-            <span key={crumb.path} className="flex items-center gap-1 shrink-0">
-              <ChevronRight size={14} className="text-muted/50" />
-              <Link
-                href={`/browse/${crumb.path}`}
-                className="text-muted hover:text-foreground transition-colors"
-              >
-                {crumb.name}
-              </Link>
-            </span>
-          ))}
-        </nav>
+        <div className="flex items-center gap-1">
+          <nav className="flex items-center gap-1 text-sm overflow-x-auto flex-1">
+            <Link
+              href="/browse"
+              className="text-muted hover:text-foreground transition-colors shrink-0"
+            >
+              <Home size={16} />
+            </Link>
+            {breadcrumbs.map((crumb) => (
+              <span key={crumb.path} className="flex items-center gap-1 shrink-0">
+                <ChevronRight size={14} className="text-muted/50" />
+                <Link
+                  href={`/browse/${crumb.path}`}
+                  className="text-muted hover:text-foreground transition-colors"
+                >
+                  {crumb.name}
+                </Link>
+              </span>
+            ))}
+          </nav>
+          <LogoutButton />
+        </div>
       </header>
 
       {/* Content */}

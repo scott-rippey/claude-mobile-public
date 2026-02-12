@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Folder, TerminalSquare, FileText, ChevronLeft, LogOut } from "lucide-react";
-import { signOut } from "next-auth/react";
-import { clearAuthValid } from "./AuthGuard";
+import { Folder, TerminalSquare, FileText, ChevronLeft } from "lucide-react";
+import { LogoutButton } from "./LogoutButton";
 import { FileBrowser } from "./FileBrowser";
 import { FileViewer } from "./FileViewer";
 import { Terminal } from "./Terminal";
@@ -71,16 +70,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
           </button>
         )}
         <h1 className="text-sm font-medium truncate flex-1">{headerTitle}</h1>
-        <button
-          onClick={() => {
-            clearAuthValid();
-            signOut({ callbackUrl: "/auth/signin" });
-          }}
-          className="text-muted hover:text-foreground p-1"
-          title="Sign out"
-        >
-          <LogOut size={18} />
-        </button>
+        <LogoutButton />
       </header>
 
       {/* Content area — all tabs mounted, inactive ones hidden */}
