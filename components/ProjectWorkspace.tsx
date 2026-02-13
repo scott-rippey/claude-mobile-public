@@ -130,7 +130,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
             <section>
               <h2 className="text-base font-semibold text-foreground mb-2">Claude Code Mobile</h2>
               <p className="text-muted leading-relaxed">
-                Remote interface to Claude Code running on your iMac. Chat with Claude, browse files, and run terminal commands — all from your phone.
+                Remote interface to Claude Code running on your local computer. Chat with Claude, browse files, and run terminal commands — all from your phone.
               </p>
             </section>
 
@@ -147,7 +147,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
             <section>
               <h3 className="text-sm font-semibold text-foreground mb-1.5">Terminal</h3>
               <p className="text-muted leading-relaxed">
-                Run shell commands directly on your iMac. Useful for git operations, running builds, checking logs, or anything you&apos;d do in a terminal. Commands run in your project directory.
+                Run shell commands directly on your local computer. Useful for git operations, running builds, checking logs, or anything you&apos;d do in a terminal. Commands run in your project directory.
               </p>
             </section>
 
