@@ -84,23 +84,28 @@ router.post("/", async (req, res) => {
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
     console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"}`);
 
-    // Strip ANTHROPIC_API_KEY so the CLI uses the login session (Max plan),
-    // not stale API key from cc-server .env
-    const { ANTHROPIC_API_KEY: _, ...cleanEnv } = process.env;
-
     const response = query({
       prompt,
       options: {
         cwd,
-        env: cleanEnv,
         ...(sessionId ? { resume: sessionId } : {}),
         systemPrompt: {
           type: "preset" as const,
           preset: "claude_code" as const,
         },
-        settingSources: ["project", "user", "local"] as const,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        settingSources: ["project"] as const,
+        mcpServers: {
+          context7: {
+            command: "npx",
+            args: ["-y", "@upstash/context7-mcp"],
+          },
+        },
+        allowedTools: [
+          "Read", "Edit", "Write", "Bash", "Glob", "Grep",
+          "MultiEdit", "Skill", "Task", "WebFetch", "WebSearch",
+          "NotebookEdit", "mcp__context7__*",
+        ],
+        permissionMode: "acceptEdits",
         model: "claude-opus-4-6",
       },
     });
