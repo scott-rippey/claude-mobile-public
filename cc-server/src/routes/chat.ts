@@ -91,19 +91,15 @@ router.post("/", async (req, res) => {
           type: "preset" as const,
           preset: "claude_code" as const,
         },
-        settingSources: ["project"] as const,
+        settingSources: ["project", "user"] as const,
         mcpServers: {
           context7: {
             command: "npx",
             args: ["-y", "@upstash/context7-mcp"],
           },
         },
-        allowedTools: [
-          "Read", "Edit", "Write", "Bash", "Glob", "Grep",
-          "MultiEdit", "Skill", "Task", "WebFetch", "WebSearch",
-          "NotebookEdit", "mcp__context7__*",
-        ],
-        permissionMode: "acceptEdits",
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
         model: "claude-opus-4-6",
         stderr: (data: string) => console.error(`[chat][stderr] ${data}`),
       },
