@@ -19,55 +19,6 @@ interface ChatInterfaceProps {
   embedded?: boolean;
 }
 
-function formatInitDataCommand(cmd: string, data: Record<string, unknown> | null): string {
-  if (!data) return "No session data yet — send a message first to initialize the session.";
-
-  if (cmd === "/context") {
-    const tools = data.tools as string[] | undefined;
-    const mcpServers = data.mcpServers as Record<string, unknown> | undefined;
-    const model = data.model as string | undefined;
-    const slashCommands = data.slashCommands as { name: string; description?: string }[] | undefined;
-    const cwd = data.cwd as string | undefined;
-    const version = data.claudeCodeVersion as string | undefined;
-
-    let out = "**Session Context**\n";
-    if (model) out += `\n**Model:** ${model}`;
-    if (version) out += `\n**Claude Code:** v${version}`;
-    if (cwd) out += `\n**Working directory:** ${cwd}`;
-    if (tools?.length) out += `\n\n**Tools (${tools.length}):** ${tools.join(", ")}`;
-    if (mcpServers && Object.keys(mcpServers).length > 0) {
-      out += `\n\n**MCP Servers:** ${Object.keys(mcpServers).join(", ")}`;
-    }
-    if (slashCommands?.length) {
-      out += `\n\n**Slash Commands (${slashCommands.length}):**\n${slashCommands.map((c) => `- \`${c.name}\`${c.description ? ` — ${c.description}` : ""}`).join("\n")}`;
-    }
-    return out;
-  }
-
-  if (cmd === "/mcp") {
-    const mcpServers = data.mcpServers as Record<string, unknown> | undefined;
-    if (!mcpServers || Object.keys(mcpServers).length === 0) return "No MCP servers configured.";
-    const tools = data.tools as string[] | undefined;
-    const mcpTools = tools?.filter((t) => t.startsWith("mcp__")) || [];
-    let out = "**MCP Servers**\n";
-    for (const name of Object.keys(mcpServers)) {
-      const serverTools = mcpTools.filter((t) => t.startsWith(`mcp__${name}__`));
-      out += `\n**${name}**`;
-      if (serverTools.length) {
-        out += `\n${serverTools.map((t) => `- \`${t.replace(`mcp__${name}__`, "")}\``).join("\n")}`;
-      }
-    }
-    return out;
-  }
-
-  if (cmd === "/model") {
-    const model = data.model as string | undefined;
-    return model ? `**Model:** ${model}` : "Model info not available.";
-  }
-
-  return "Unknown command.";
-}
-
 export function ChatInterface({
   projectPath,
   projectName,
@@ -83,7 +34,6 @@ export function ChatInterface({
     return null;
   });
   const [sessionCost, setSessionCost] = useState({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
-  const [initData, setInitData] = useState<Record<string, unknown> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -115,7 +65,7 @@ export function ChatInterface({
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: "**Instant commands** (from session data):\n- `/context` — Show session info (model, tools, MCP, slash commands)\n- `/mcp` — Show MCP servers and their tools\n- `/model` — Show current model\n- `/cost` — Show accumulated session cost\n- `/clear` — Start a new conversation\n- `/help` — Show this message\n\n**Action commands** (Claude does the work):\n- `/compact [focus]` — Compress conversation history\n- `/review [PR]` — Code review\n- `/doctor` — Run project diagnostics\n- `/init` — Initialize/update CLAUDE.md\n\n**Custom commands** (`/catchup`, `/log`, `/push`, etc.) are loaded from `.md` files.\n\nAll other `/` commands pass through to the SDK.",
+            content: "**Client commands:**\n- `/clear` — Start a new conversation\n- `/cost` — Show accumulated session cost\n- `/help` — Show this message\n\n**All other `/` commands** (including `/context`, `/compact`, `/model`, `/mcp`, etc.) pass through to the SDK.\n\n**Custom commands** (`/catchup`, `/log`, etc.) are expanded from `.md` files before sending.",
           },
         ]);
         return;
@@ -141,17 +91,7 @@ export function ChatInterface({
         ]);
         return;
       }
-      if (cmd === "/context" || cmd === "/mcp" || cmd === "/model") {
-        setInput("");
-        const content = formatInitDataCommand(cmd, initData);
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "user", content: trimmed },
-          { id: crypto.randomUUID(), role: "assistant", content },
-        ]);
-        return;
-      }
-      // All other slash commands pass through to server
+      // All other slash commands pass through to server/SDK
     }
 
     const userMessage: MessageBlock = {
@@ -196,7 +136,6 @@ export function ChatInterface({
           case "init": {
             const newSessionId = event.data.sessionId as string;
             setSessionId(newSessionId);
-            setInitData(event.data);
             localStorage.setItem(`cc-session-${projectPath}`, newSessionId);
             break;
           }
@@ -361,7 +300,6 @@ export function ChatInterface({
     setMessages([]);
     setSessionId(null);
     setSessionCost({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
-    setInitData(null);
     localStorage.removeItem(`cc-session-${projectPath}`);
   };
 

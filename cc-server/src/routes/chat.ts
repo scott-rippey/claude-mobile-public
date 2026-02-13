@@ -8,27 +8,8 @@ import type { ChatRequest } from "../types.js";
 const router = Router();
 
 /**
- * CLI commands the SDK doesn't support that require Claude to do actual work.
- * Info commands (/context, /mcp, /model) are handled client-side from init data.
- * SDK-native commands (/compact, /clear) pass through as-is.
- * Client-side commands (/cost, /help) never reach the server.
- */
-const CLI_COMMAND_EXPANSIONS: Record<string, string | ((args: string, cwd: string) => string)> = {
-  doctor: (_args, cwd) =>
-    `Run diagnostics on this project at ${cwd}. Check for common issues: missing dependencies (node_modules), config errors, TypeScript issues, lock file problems, etc. Report what you find.`,
-  init: (_args, cwd) =>
-    `Initialize or update a CLAUDE.md file for this project at ${cwd}. Read the codebase structure, key files, and conventions, then create or update CLAUDE.md with project architecture, instructions, and conventions.`,
-  review: (args) =>
-    args
-      ? `Review this pull request or diff: ${args}. Provide a thorough code review with suggestions.`
-      : "Run `git diff` and provide a thorough code review of the current changes with suggestions.",
-};
-
-/**
- * Expand slash commands:
- * 1. Custom .md files (project, user, BASE_DIR) — highest priority
- * 2. CLI command expansions for commands the SDK doesn't support
- * 3. Everything else passes through as-is (SDK-native like /compact, or unknown)
+ * Expand custom slash commands from .md files only.
+ * Everything else passes through as-is to the SDK — let it handle its own commands.
  */
 async function expandSlashCommand(
   message: string,
@@ -36,14 +17,13 @@ async function expandSlashCommand(
 ): Promise<string> {
   if (!message.startsWith("/")) return message;
 
-  // Parse: /cmdName arg1 arg2...
   const match = message.match(/^\/(\S+)\s*(.*)/s);
   if (!match) return message;
 
   const [, cmdName, args] = match;
   const baseDir = process.env.BASE_DIR || "";
 
-  // 1. Custom .md command files take priority
+  // Only expand custom .md command files
   const searchPaths = [
     path.join(cwd, ".claude", "commands", `${cmdName}.md`),
     path.join(os.homedir(), ".claude", "commands", `${cmdName}.md`),
@@ -53,13 +33,8 @@ async function expandSlashCommand(
   for (const cmdPath of searchPaths) {
     try {
       const content = await fs.readFile(cmdPath, "utf-8");
-
-      // Strip YAML frontmatter (--- ... ---)
       const stripped = content.replace(/^---\n[\s\S]*?\n---\n*/, "");
-
-      // Replace $ARGUMENTS placeholder with actual args
       const expanded = stripped.replace(/\$ARGUMENTS/g, args.trim());
-
       console.error(`[chat] expanded /${cmdName} from ${cmdPath} (${expanded.length} chars)`);
       return expanded;
     } catch {
@@ -67,16 +42,8 @@ async function expandSlashCommand(
     }
   }
 
-  // 2. CLI commands the SDK doesn't support — expand to prompts
-  const cliExpansion = CLI_COMMAND_EXPANSIONS[cmdName];
-  if (cliExpansion) {
-    const expanded = typeof cliExpansion === "function" ? cliExpansion(args.trim(), cwd) : cliExpansion;
-    console.error(`[chat] expanded /${cmdName} via CLI expansion (${expanded.length} chars)`);
-    return expanded;
-  }
-
-  // 3. Pass through as-is (SDK-native commands like /compact, or unknown)
-  console.error(`[chat] passing /${cmdName} through to SDK as-is`);
+  // Not a custom command — pass through raw to SDK
+  console.error(`[chat] passing /${cmdName} through to SDK`);
   return message;
 }
 
