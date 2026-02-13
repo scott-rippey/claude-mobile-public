@@ -33,8 +33,6 @@ export function ChatInterface({
     }
     return null;
   });
-  const [sessionCost, setSessionCost] = useState({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
-  const [initData, setInitData] = useState<Record<string, unknown> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -50,102 +48,13 @@ export function ChatInterface({
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
 
-    // Handle client-side slash commands
-    if (trimmed.startsWith("/")) {
-      const cmd = trimmed.split(" ")[0].toLowerCase();
-      if (cmd === "/clear") {
-        setInput("");
-        startNewConversation();
-        return;
-      }
-      if (cmd === "/help") {
-        setInput("");
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "user", content: trimmed },
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: "**Instant commands** (real SDK data, no round-trip):\n- `/context` — Session info (model, tools, MCP servers, commands)\n- `/mcp` — MCP servers and their tools\n- `/model` — Current model\n- `/cost` — Accumulated session cost\n- `/clear` — Start a new conversation\n- `/help` — This message\n\n**SDK commands** (sent to Claude):\n- `/compact [focus]` — Compress conversation history\n\n**Custom commands** (`/catchup`, `/log`, `/push`, etc.) — expanded from `.md` files.\n\nAnything else passes through to the SDK as-is.",
-          },
-        ]);
-        return;
-      }
-      if (cmd === "/cost") {
-        setInput("");
-        const cost = sessionCost.totalCostUsd;
-        const duration = sessionCost.totalDurationMs;
-        const turns = sessionCost.totalTurns;
-        const durationStr = duration > 60000
-          ? `${(duration / 60000).toFixed(1)} min`
-          : `${(duration / 1000).toFixed(1)}s`;
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "user", content: trimmed },
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: turns === 0
-              ? "No cost data yet — send a message first."
-              : `**Session Cost**\n- Total: $${cost.toFixed(4)}\n- Duration: ${durationStr}\n- Turns: ${turns}`,
-          },
-        ]);
-        return;
-      }
-      // SDK doesn't support /context, /mcp, /model — handle client-side from real init data
-      if (cmd === "/context" || cmd === "/mcp" || cmd === "/model") {
-        setInput("");
-        let content: string;
-        if (!initData) {
-          content = "No session data yet — send a message first to initialize.";
-        } else if (cmd === "/context") {
-          const model = initData.model as string | undefined;
-          const version = initData.claudeCodeVersion as string | undefined;
-          const cwd = initData.cwd as string | undefined;
-          const tools = initData.tools as string[] | undefined;
-          const mcpServers = initData.mcpServers as Record<string, unknown> | undefined;
-          const slashCmds = initData.slashCommands as { name: string; description?: string }[] | undefined;
-          const builtinTools = (tools || []).filter((t) => !t.startsWith("mcp__"));
-          const mcpNames = mcpServers ? Object.keys(mcpServers) : [];
-          const mcpToolCount = (tools || []).filter((t) => t.startsWith("mcp__")).length;
-          const lines = ["**Session Context**"];
-          if (model) lines.push(`**Model:** ${model}`);
-          if (version) lines.push(`**Claude Code:** v${version}`);
-          if (cwd) lines.push(`**CWD:** \`${cwd}\``);
-          if (builtinTools.length) lines.push(`**Tools:** ${builtinTools.join(", ")}`);
-          if (mcpNames.length) lines.push(`**MCP Servers (${mcpNames.length}):** ${mcpNames.join(", ")} (${mcpToolCount} tools — use \`/mcp\` for details)`);
-          if (slashCmds?.length) lines.push(`**Slash Commands:** ${slashCmds.length} available (use \`/help\` to list)`);
-          content = lines.join("\n");
-        } else if (cmd === "/mcp") {
-          const mcpServers = initData.mcpServers as Record<string, unknown> | undefined;
-          const tools = initData.tools as string[] | undefined;
-          if (!mcpServers || Object.keys(mcpServers).length === 0) {
-            content = "No MCP servers configured.";
-          } else {
-            const lines = ["**MCP Servers**"];
-            for (const name of Object.keys(mcpServers)) {
-              const serverTools = (tools || []).filter((t) => t.startsWith(`mcp__${name}__`));
-              lines.push(`\n**${name}**`);
-              if (serverTools.length) {
-                serverTools.forEach((t) => lines.push(`- \`${t.replace(`mcp__${name}__`, "")}\``));
-              } else {
-                lines.push("- (no tools registered)");
-              }
-            }
-            content = lines.join("\n");
-          }
-        } else {
-          content = `**Model:** ${(initData.model as string) || "unknown"}`;
-        }
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "user", content: trimmed },
-          { id: crypto.randomUUID(), role: "assistant", content },
-        ]);
-        return;
-      }
-      // All other slash commands pass through to server/SDK
+    // /clear is the only client-side command (resets local state)
+    if (trimmed.toLowerCase() === "/clear") {
+      setInput("");
+      startNewConversation();
+      return;
     }
+    // Everything else goes to the server (built-in commands, custom .md, SDK pass-through)
 
     const userMessage: MessageBlock = {
       id: crypto.randomUUID(),
@@ -189,7 +98,7 @@ export function ChatInterface({
           case "init": {
             const newSessionId = event.data.sessionId as string;
             setSessionId(newSessionId);
-            setInitData(event.data);
+
             localStorage.setItem(`cc-session-${projectPath}`, newSessionId);
             break;
           }
@@ -275,18 +184,6 @@ export function ChatInterface({
             const isError = event.data.isError as boolean | undefined;
             const errors = event.data.errors as string[] | undefined;
             const result = event.data.result as string | undefined;
-            const totalCostUsd = event.data.totalCostUsd as number | undefined;
-            const durationMs = event.data.durationMs as number | undefined;
-            const numTurns = event.data.numTurns as number | undefined;
-
-            // Accumulate session cost
-            if (totalCostUsd !== undefined) {
-              setSessionCost((prev) => ({
-                totalCostUsd: prev.totalCostUsd + totalCostUsd,
-                totalDurationMs: prev.totalDurationMs + (durationMs || 0),
-                totalTurns: prev.totalTurns + (numTurns || 0),
-              }));
-            }
 
             if (isError && errors?.length) {
               // Show SDK error results that were previously swallowed
@@ -353,8 +250,6 @@ export function ChatInterface({
   const startNewConversation = () => {
     setMessages([]);
     setSessionId(null);
-    setSessionCost({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
-    setInitData(null);
     localStorage.removeItem(`cc-session-${projectPath}`);
   };
 

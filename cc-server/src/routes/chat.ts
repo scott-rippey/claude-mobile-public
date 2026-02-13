@@ -7,10 +7,39 @@ import type { ChatRequest } from "../types.js";
 
 const router = Router();
 
-/**
- * Expand custom slash commands from .md files only.
- * Everything else passes through as-is to the SDK — let it handle its own commands.
- */
+// ── Session state ──────────────────────────────────────────────────
+interface SessionState {
+  initData: Record<string, unknown> | null;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    contextWindowSize: number;
+  };
+  cost: {
+    totalCostUsd: number;
+    totalDurationMs: number;
+    totalTurns: number;
+  };
+}
+
+const sessions = new Map<string, SessionState>();
+
+function getSession(sessionId: string): SessionState {
+  let s = sessions.get(sessionId);
+  if (!s) {
+    s = {
+      initData: null,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, contextWindowSize: 0 },
+      cost: { totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 },
+    };
+    sessions.set(sessionId, s);
+  }
+  return s;
+}
+
+// ── Custom .md command expansion ───────────────────────────────────
 async function expandSlashCommand(
   message: string,
   cwd: string
@@ -23,7 +52,6 @@ async function expandSlashCommand(
   const [, cmdName, args] = match;
   const baseDir = process.env.BASE_DIR || "";
 
-  // Only expand custom .md command files
   const searchPaths = [
     path.join(cwd, ".claude", "commands", `${cmdName}.md`),
     path.join(os.homedir(), ".claude", "commands", `${cmdName}.md`),
@@ -47,7 +75,137 @@ async function expandSlashCommand(
   return message;
 }
 
-// POST /api/chat — SSE streaming response
+// ── Built-in command handlers (server-side, no SDK round-trip) ─────
+function handleBuiltinCommand(
+  cmd: string,
+  sessionId: string | null,
+  sendEvent: (type: string, data: unknown) => void
+): boolean {
+  const session = sessionId ? sessions.get(sessionId) : null;
+
+  switch (cmd) {
+    case "/context": {
+      if (!session?.initData) {
+        sendEvent("assistant", { text: "No session data yet — send a message first." });
+      } else {
+        const { initData, usage, cost } = session;
+        const model = initData.model as string | undefined;
+        const version = initData.claudeCodeVersion as string | undefined;
+        const cwd = initData.cwd as string | undefined;
+        const tools = initData.tools as string[] | undefined;
+        const mcpServers = initData.mcpServers as Record<string, unknown> | undefined;
+        const builtinTools = (tools || []).filter((t: string) => !t.startsWith("mcp__"));
+        const mcpNames = mcpServers ? Object.keys(mcpServers) : [];
+        const mcpToolCount = (tools || []).filter((t: string) => t.startsWith("mcp__")).length;
+
+        const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, contextWindowSize } = usage;
+        const totalTokens = inputTokens + cacheCreationTokens + cacheReadTokens;
+        const percentUsed = contextWindowSize > 0 ? Math.round((totalTokens / contextWindowSize) * 100) : 0;
+
+        const lines: string[] = [];
+        // Context window usage — the main thing /context shows
+        if (contextWindowSize > 0) {
+          const sizeK = Math.round(contextWindowSize / 1000);
+          lines.push(`**Context Window:** ${totalTokens.toLocaleString()} / ${sizeK}k tokens (**${percentUsed}%** used)`);
+          lines.push(`- Input: ${inputTokens.toLocaleString()} | Output: ${outputTokens.toLocaleString()}`);
+          if (cacheReadTokens > 0 || cacheCreationTokens > 0) {
+            lines.push(`- Cache read: ${cacheReadTokens.toLocaleString()} | Cache write: ${cacheCreationTokens.toLocaleString()}`);
+          }
+        } else {
+          lines.push(`**Tokens:** Input: ${inputTokens.toLocaleString()} | Output: ${outputTokens.toLocaleString()}`);
+        }
+
+        lines.push("");
+        if (model) lines.push(`**Model:** ${model}`);
+        if (version) lines.push(`**Claude Code:** v${version}`);
+        if (cwd) lines.push(`**CWD:** \`${cwd}\``);
+        lines.push(`**Cost:** $${cost.totalCostUsd.toFixed(4)} (${cost.totalTurns} turns)`);
+        if (builtinTools.length) lines.push(`**Tools:** ${builtinTools.length} built-in + ${mcpToolCount} MCP (${mcpNames.length} servers)`);
+
+        sendEvent("assistant", { text: lines.join("\n") });
+      }
+      sendEvent("done", {});
+      return true;
+    }
+
+    case "/mcp": {
+      if (!session?.initData) {
+        sendEvent("assistant", { text: "No session data yet — send a message first." });
+      } else {
+        const tools = session.initData.tools as string[] | undefined;
+        const mcpServers = session.initData.mcpServers as Record<string, unknown> | undefined;
+        if (!mcpServers || Object.keys(mcpServers).length === 0) {
+          sendEvent("assistant", { text: "No MCP servers configured." });
+        } else {
+          const lines = ["**MCP Servers**"];
+          for (const name of Object.keys(mcpServers)) {
+            const serverTools = (tools || []).filter((t: string) => t.startsWith(`mcp__${name}__`));
+            lines.push(`\n**${name}**`);
+            if (serverTools.length) {
+              serverTools.forEach((t: string) => lines.push(`- \`${t.replace(`mcp__${name}__`, "")}\``));
+            } else {
+              lines.push("- (no tools registered)");
+            }
+          }
+          sendEvent("assistant", { text: lines.join("\n") });
+        }
+      }
+      sendEvent("done", {});
+      return true;
+    }
+
+    case "/model": {
+      const model = session?.initData?.model as string | undefined;
+      sendEvent("assistant", { text: model ? `**Model:** ${model}` : "No session data yet — send a message first." });
+      sendEvent("done", {});
+      return true;
+    }
+
+    case "/cost": {
+      if (!session || session.cost.totalTurns === 0) {
+        sendEvent("assistant", { text: "No cost data yet — send a message first." });
+      } else {
+        const { totalCostUsd, totalDurationMs, totalTurns } = session.cost;
+        const durationStr = totalDurationMs > 60000
+          ? `${(totalDurationMs / 60000).toFixed(1)} min`
+          : `${(totalDurationMs / 1000).toFixed(1)}s`;
+        sendEvent("assistant", {
+          text: `**Session Cost**\n- Total: $${totalCostUsd.toFixed(4)}\n- Duration: ${durationStr}\n- Turns: ${totalTurns}`,
+        });
+      }
+      sendEvent("done", {});
+      return true;
+    }
+
+    case "/help": {
+      sendEvent("assistant", {
+        text: [
+          "**Built-in commands** (instant, real session data):",
+          "- `/context` — Context window usage, model, cost",
+          "- `/mcp` — MCP servers and their tools",
+          "- `/model` — Current model",
+          "- `/cost` — Session cost and duration",
+          "- `/clear` — Start a new conversation",
+          "- `/help` — This message",
+          "",
+          "**SDK commands** (sent to Claude):",
+          "- `/compact [focus]` — Compress conversation history",
+          "",
+          "**Custom commands** (`/catchup`, `/log`, `/push`, etc.) — expanded from `.md` files.",
+          "",
+          "Anything else passes through to the SDK.",
+        ].join("\n"),
+      });
+      sendEvent("done", {});
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
+// ── POST /api/chat — SSE streaming response ────────────────────────
 router.post("/", async (req, res) => {
   const baseDir = process.env.BASE_DIR!;
   const { message, sessionId, projectPath } = req.body as ChatRequest;
@@ -76,8 +234,15 @@ router.post("/", async (req, res) => {
     res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
   };
 
+  // Handle built-in commands server-side (no SDK round-trip)
+  const cmd = message.trim().split(" ")[0].toLowerCase();
+  if (handleBuiltinCommand(cmd, sessionId || null, sendEvent)) {
+    res.end();
+    return;
+  }
+
   try {
-    // Expand slash commands (e.g. /catchup → full prompt from .md file)
+    // Expand custom .md slash commands
     const prompt = await expandSlashCommand(message, cwd);
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
     console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"}`);
@@ -105,6 +270,7 @@ router.post("/", async (req, res) => {
       },
     });
 
+    let currentSessionId = sessionId;
     let eventCount = 0;
     for await (const msg of response) {
       const m = msg as any;
@@ -114,7 +280,8 @@ router.post("/", async (req, res) => {
       switch (msg.type) {
         case "system": {
           if (m.subtype === "init") {
-            sendEvent("init", {
+            currentSessionId = m.session_id;
+            const initData = {
               sessionId: m.session_id,
               tools: m.tools,
               mcpServers: m.mcp_servers,
@@ -126,17 +293,29 @@ router.post("/", async (req, res) => {
               agents: m.agents,
               claudeCodeVersion: m.claude_code_version,
               cwd: m.cwd,
-            });
+            };
+            // Store in session state
+            const session = getSession(m.session_id);
+            session.initData = initData;
+            sendEvent("init", initData);
           } else if (m.subtype === "status") {
             sendEvent("status", { status: m.status });
           } else {
-            // Forward all other system subtypes (compact_boundary, context info, etc.)
             sendEvent("system", { subtype: m.subtype, ...m });
           }
           break;
         }
 
         case "assistant": {
+          // Track usage (context window consumption)
+          if (m.message.usage && currentSessionId) {
+            const session = getSession(currentSessionId);
+            const u = m.message.usage;
+            session.usage.inputTokens = u.input_tokens ?? session.usage.inputTokens;
+            session.usage.outputTokens = u.output_tokens ?? session.usage.outputTokens;
+            session.usage.cacheReadTokens = u.cache_read_input_tokens ?? session.usage.cacheReadTokens;
+            session.usage.cacheCreationTokens = u.cache_creation_input_tokens ?? session.usage.cacheCreationTokens;
+          }
           for (const block of msg.message.content) {
             console.error(`[chat]   block.type=${block.type}`);
             if (block.type === "text") {
@@ -153,7 +332,6 @@ router.post("/", async (req, res) => {
         }
 
         case "user": {
-          // Tool results — extract from message.content blocks
           for (const block of m.message.content) {
             if (block.type === "tool_result") {
               let content = "";
@@ -186,6 +364,25 @@ router.post("/", async (req, res) => {
           console.error(`[chat] RESULT: subtype=${m.subtype} is_error=${m.is_error} num_turns=${m.num_turns} duration_ms=${m.duration_ms} result=${JSON.stringify(m.result)?.slice(0, 500)}`);
           if (m.errors) console.error(`[chat] ERRORS: ${JSON.stringify(m.errors)}`);
           if (m.permission_denials?.length) console.error(`[chat] PERMISSION_DENIALS: ${JSON.stringify(m.permission_denials)}`);
+
+          // Update session cost + context window size
+          const sid = m.session_id || currentSessionId;
+          if (sid) {
+            const session = getSession(sid);
+            if (m.total_cost_usd !== undefined) {
+              session.cost.totalCostUsd += m.total_cost_usd;
+              session.cost.totalDurationMs += m.duration_ms || 0;
+              session.cost.totalTurns += m.num_turns || 0;
+            }
+            // Extract context window size from model_usage
+            if (m.model_usage) {
+              const firstModel = Object.values(m.model_usage)[0] as { contextWindow?: number } | undefined;
+              if (firstModel?.contextWindow) {
+                session.usage.contextWindowSize = firstModel.contextWindow;
+              }
+            }
+          }
+
           sendEvent("result", {
             subtype: m.subtype,
             result: m.result,
