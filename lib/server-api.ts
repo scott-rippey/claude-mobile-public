@@ -8,18 +8,20 @@ export async function serverFetch(
 ): Promise<Response> {
   const url = `${TUNNEL_URL}${path}`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = timeoutMs > 0
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
 
   try {
     return await fetch(url, {
       ...init,
-      signal: init?.signal ?? controller.signal,
+      signal: init?.signal ?? (timeout ? controller.signal : undefined),
       headers: {
         ...init?.headers,
         Authorization: `Bearer ${SHARED_SECRET}`,
       },
     });
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
   }
 }

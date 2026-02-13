@@ -5,11 +5,16 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
 
   try {
-    const res = await serverFetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    // SSE streams run for minutes — no timeout
+    const res = await serverFetch(
+      "/api/chat",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      0
+    );
 
     if (!res.ok) {
       const data = await res.json();
