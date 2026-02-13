@@ -33,6 +33,7 @@ export function ChatInterface({
     }
     return null;
   });
+  const [sessionCost, setSessionCost] = useState({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -64,7 +65,28 @@ export function ChatInterface({
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: "**Client commands:**\n- `/clear` — Start a new conversation\n- `/help` — Show this message\n\nAll other `/` commands are sent to Claude.",
+            content: "**Client commands** (instant, no server round-trip):\n- `/clear` — Start a new conversation\n- `/cost` — Show accumulated session cost\n- `/help` — Show this message\n\n**Built-in commands** (expanded to prompts for Claude):\n- `/context` — Report what's in context (CLAUDE.md, tools, MCP servers)\n- `/compact [focus]` — Summarize conversation (optionally focused on a topic)\n- `/model` — Report current model\n- `/mcp` — Show MCP server status\n- `/review [PR]` — Code review (current diff or specific PR)\n- `/doctor` — Run project diagnostics\n- `/init` — Initialize/update CLAUDE.md\n\n**Custom commands** (`/catchup`, `/log`, `/push`, etc.) are loaded from `.md` files.\n\nAll non-client `/` commands are expanded server-side and sent to Claude.",
+          },
+        ]);
+        return;
+      }
+      if (cmd === "/cost") {
+        setInput("");
+        const cost = sessionCost.totalCostUsd;
+        const duration = sessionCost.totalDurationMs;
+        const turns = sessionCost.totalTurns;
+        const durationStr = duration > 60000
+          ? `${(duration / 60000).toFixed(1)} min`
+          : `${(duration / 1000).toFixed(1)}s`;
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "user", content: trimmed },
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: turns === 0
+              ? "No cost data yet — send a message first."
+              : `**Session Cost**\n- Total: $${cost.toFixed(4)}\n- Duration: ${durationStr}\n- Turns: ${turns}`,
           },
         ]);
         return;
@@ -181,6 +203,18 @@ export function ChatInterface({
             const isError = event.data.isError as boolean | undefined;
             const errors = event.data.errors as string[] | undefined;
             const result = event.data.result as string | undefined;
+            const totalCostUsd = event.data.totalCostUsd as number | undefined;
+            const durationMs = event.data.durationMs as number | undefined;
+            const numTurns = event.data.numTurns as number | undefined;
+
+            // Accumulate session cost
+            if (totalCostUsd !== undefined) {
+              setSessionCost((prev) => ({
+                totalCostUsd: prev.totalCostUsd + totalCostUsd,
+                totalDurationMs: prev.totalDurationMs + (durationMs || 0),
+                totalTurns: prev.totalTurns + (numTurns || 0),
+              }));
+            }
 
             if (isError && errors?.length) {
               // Show SDK error results that were previously swallowed
@@ -247,6 +281,7 @@ export function ChatInterface({
   const startNewConversation = () => {
     setMessages([]);
     setSessionId(null);
+    setSessionCost({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
     localStorage.removeItem(`cc-session-${projectPath}`);
   };
 
