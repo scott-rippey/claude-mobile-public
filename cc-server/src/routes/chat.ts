@@ -8,17 +8,12 @@ import type { ChatRequest } from "../types.js";
 const router = Router();
 
 /**
- * CLI-only commands that the SDK doesn't handle natively.
- * These get expanded into prompts so Claude can answer them.
- *
- * NOT listed here (SDK handles natively): /compact, /clear
- * NOT listed here (client-side): /cost, /help
+ * CLI commands the SDK doesn't support that require Claude to do actual work.
+ * Info commands (/context, /mcp, /model) are handled client-side from init data.
+ * SDK-native commands (/compact, /clear) pass through as-is.
+ * Client-side commands (/cost, /help) never reach the server.
  */
 const CLI_COMMAND_EXPANSIONS: Record<string, string | ((args: string, cwd: string) => string)> = {
-  context: (_args, cwd) =>
-    `Report what's currently in your context. Include: project info from CLAUDE.md (check ${cwd}/CLAUDE.md and ${cwd}/.claude/), available tools, configured MCP servers, and approximately how long our conversation has been. Format it clearly.`,
-  mcp: "Report the MCP servers currently configured and available in this session. List each server name and what tools it provides.",
-  model: "Report the current model you are running as (model name and ID).",
   doctor: (_args, cwd) =>
     `Run diagnostics on this project at ${cwd}. Check for common issues: missing dependencies (node_modules), config errors, TypeScript issues, lock file problems, etc. Report what you find.`,
   init: (_args, cwd) =>
