@@ -84,27 +84,29 @@ router.post("/", async (req, res) => {
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
     console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"}`);
 
-    // Strip ANTHROPIC_API_KEY so the CLI uses the user's login session (plan)
-    // instead of a potentially stale API key from cc-server's .env
-    const { ANTHROPIC_API_KEY: _, ...cleanEnv } = process.env;
-
     const response = query({
       prompt,
       options: {
         cwd,
-        env: cleanEnv,
         ...(sessionId ? { resume: sessionId } : {}),
         systemPrompt: {
           type: "preset" as const,
           preset: "claude_code" as const,
         },
-        // Load all settings: project CLAUDE.md, user settings (~/.claude/),
-        // and local settings (.claude/settings.local.json) for MCP servers + plugins
-        settingSources: ["project", "user", "local"] as const,
-        // Headless SSE mode can't prompt for permissions — auto-approve everything.
-        // Personal tool behind Google OAuth + shared secret, same risk as local CLI.
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        // Start with proven working settings, then layer on features
+        settingSources: ["project"] as const,
+        permissionMode: "acceptEdits",
+        allowedTools: [
+          "Read", "Edit", "Write", "Bash", "Glob", "Grep",
+          "MultiEdit", "Skill", "Task", "WebFetch", "WebSearch",
+          "NotebookEdit", "mcp__*",
+        ],
+        mcpServers: {
+          context7: {
+            command: "npx",
+            args: ["-y", "@upstash/context7-mcp"],
+          },
+        },
         model: "claude-opus-4-6",
       },
     });
