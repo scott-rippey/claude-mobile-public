@@ -1,8 +1,8 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { Terminal } from "lucide-react";
 import { markAuthValid } from "@/components/AuthGuard";
+import { ClaudeLogo } from "@/components/ClaudeLogo";
 
 export default function SignInPage() {
   return (
@@ -10,11 +10,11 @@ export default function SignInPage() {
       <div className="w-full max-w-sm text-center space-y-8">
         <div className="space-y-3">
           <div className="flex justify-center">
-            <Terminal size={48} className="text-accent" />
+            <ClaudeLogo size={48} className="text-accent" />
           </div>
-          <h1 className="text-2xl font-bold">CC Interface</h1>
+          <h1 className="text-2xl font-bold">Claude Code Mobile</h1>
           <p className="text-sm text-muted">
-            Mobile interface for Claude Code
+            Remote Claude Code from your phone
           </p>
         </div>
 

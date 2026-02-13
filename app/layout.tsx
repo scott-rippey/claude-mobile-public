@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CC Interface",
-  description: "Claude Code mobile interface",
+  title: "Claude Code Mobile",
+  description: "Remote Claude Code interface for mobile",
 };
 
 export const viewport: Viewport = {
