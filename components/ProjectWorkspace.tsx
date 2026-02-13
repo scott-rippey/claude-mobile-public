@@ -168,12 +168,11 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
                     {[
                       ["/clear", "Clear conversation, start fresh session"],
                       ["/help", "List all available commands"],
-                      ["/context", "Show project context (CLAUDE.md, MCP, tools)"],
+                      ["/context", "Context usage, loaded CLAUDE.md, MCP, tools"],
                       ["/model [name]", "Show or change the AI model"],
-                      ["/cost", "Session cost and context usage"],
                       ["/mcp", "MCP server connection status"],
                       ["/status", "Full session overview"],
-                      ["/compact", "Info about context compaction"],
+                      ["/compact", "Compact conversation (passes to SDK)"],
                     ].map(([cmd, desc]) => (
                       <div key={cmd} className="flex gap-3 px-3 py-2">
                         <code className="text-accent text-xs font-mono whitespace-nowrap">{cmd}</code>

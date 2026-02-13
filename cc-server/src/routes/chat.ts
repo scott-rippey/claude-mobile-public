@@ -130,14 +130,13 @@ async function handleHelp(ctx: CommandContext) {
   text += "### Built-in\n";
   text += "| Command | Description |\n";
   text += "|---------|-------------|\n";
-  text += "| `/clear` | Clear conversation and start fresh (client-side) |\n";
+  text += "| `/clear` | Clear conversation and start fresh |\n";
   text += "| `/help` | Show this help |\n";
-  text += "| `/context` | Show current project context |\n";
+  text += "| `/context` | Context usage, loaded CLAUDE.md, MCP, tools |\n";
   text += "| `/model [name]` | Show or change the model |\n";
-  text += "| `/cost` | Show session cost |\n";
-  text += "| `/mcp` | Show MCP server status |\n";
-  text += "| `/compact` | Info about conversation compaction |\n";
-  text += "| `/status` | Show session status |\n";
+  text += "| `/mcp` | MCP server connection status |\n";
+  text += "| `/status` | Full session overview |\n";
+  text += "| `/compact` | Compact conversation (passes to SDK) |\n";
 
   if (customCmds.length > 0) {
     text += "\n### Custom Commands\n";
@@ -161,7 +160,21 @@ async function handleHelp(ctx: CommandContext) {
 }
 
 async function handleContext(ctx: CommandContext) {
-  let text = "## Project Context\n\n";
+  const { contextTokens, contextWindow, model } = ctx.session;
+  let text = "## Context\n\n";
+
+  // Context usage (most important — show first)
+  if (contextWindow > 0) {
+    const used = (contextTokens / 1000).toFixed(1);
+    const total = (contextWindow / 1000).toFixed(0);
+    const pct = ((contextTokens / contextWindow) * 100).toFixed(0);
+    const remaining = ((contextWindow - contextTokens) / 1000).toFixed(0);
+    text += `**${pct}% used** — ${used}k / ${total}k tokens (${remaining}k remaining)\n\n`;
+  } else {
+    text += "*No context data yet — send a message first.*\n\n";
+  }
+
+  text += `**Model:** ${model}\n`;
   text += `**Working directory:** \`${ctx.cwd}\`\n\n`;
 
   // Read CLAUDE.md files
@@ -201,8 +214,6 @@ async function handleContext(ctx: CommandContext) {
       }
       text += "\n";
     }
-  } else {
-    text += "*Send a message first to load full SDK context (MCP servers, tools, plugins).*\n";
   }
 
   ctx.sendEvent("assistant", { text });
@@ -218,17 +229,6 @@ async function handleModel(ctx: CommandContext) {
   } else {
     ctx.sendEvent("assistant", { text: `Current model: **${ctx.session.model}**\n\nUsage: \`/model <model-name>\`\n\nExamples:\n- \`/model claude-sonnet-4-5-20250929\`\n- \`/model claude-opus-4-6\`\n- \`/model claude-haiku-4-5-20251001\`` });
   }
-}
-
-async function handleCost(ctx: CommandContext) {
-  const { totalCostUsd, messageCount, contextTokens, contextWindow, model } = ctx.session;
-  const pct = contextWindow > 0 ? ((contextTokens / contextWindow) * 100).toFixed(1) : "?";
-  let text = `## Session Cost\n\n`;
-  text += `- **Total:** $${totalCostUsd.toFixed(4)}\n`;
-  text += `- **Messages:** ${messageCount}\n`;
-  text += `- **Model:** ${model}\n`;
-  text += `- **Context:** ${(contextTokens / 1000).toFixed(1)}k / ${(contextWindow / 1000).toFixed(0)}k tokens (${pct}%)`;
-  ctx.sendEvent("assistant", { text });
 }
 
 async function handleMcp(ctx: CommandContext) {
@@ -248,12 +248,6 @@ async function handleMcp(ctx: CommandContext) {
   ctx.sendEvent("assistant", { text });
 }
 
-async function handleCompact(ctx: CommandContext) {
-  ctx.sendEvent("assistant", {
-    text: "## Conversation Compaction\n\nThe SDK handles compaction **automatically** when the conversation approaches the context limit. You'll see a \"compacting...\" status when this happens.\n\nTo manually start fresh, use `/clear` to reset the conversation.",
-  });
-}
-
 async function handleClear(ctx: CommandContext) {
   // Delete session state from memory
   if (ctx.sessionId) {
@@ -264,16 +258,16 @@ async function handleClear(ctx: CommandContext) {
 }
 
 async function handleStatus(ctx: CommandContext) {
-  const { model, messageCount, totalCostUsd, contextTokens, contextWindow } = ctx.session;
+  const { model, messageCount, contextTokens, contextWindow } = ctx.session;
   const init = ctx.session.lastInit;
-  const pct = contextWindow > 0 ? ((contextTokens / contextWindow) * 100).toFixed(1) : "?";
+  const pct = contextWindow > 0 ? ((contextTokens / contextWindow) * 100).toFixed(0) : "?";
+  const remaining = contextWindow > 0 ? ((contextWindow - contextTokens) / 1000).toFixed(0) : "?";
 
   let text = "## Session Status\n\n";
-  text += `- **Session ID:** ${ctx.sessionId || "none (new session)"}\n`;
+  text += `- **Context:** ${pct}% used (${remaining}k remaining)\n`;
   text += `- **Model:** ${model}\n`;
   text += `- **Messages:** ${messageCount}\n`;
-  text += `- **Cost:** $${totalCostUsd.toFixed(4)}\n`;
-  text += `- **Context:** ${(contextTokens / 1000).toFixed(1)}k / ${(contextWindow / 1000).toFixed(0)}k tokens (${pct}%)\n`;
+  text += `- **Session ID:** ${ctx.sessionId || "none (new session)"}\n`;
   text += `- **Working directory:** \`${ctx.cwd}\`\n`;
 
   if (init) {
@@ -292,9 +286,7 @@ const BUILTIN_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void>> =
   help: handleHelp,
   context: handleContext,
   model: handleModel,
-  cost: handleCost,
   mcp: handleMcp,
-  compact: handleCompact,
   status: handleStatus,
 };
 
