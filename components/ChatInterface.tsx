@@ -65,7 +65,7 @@ export function ChatInterface({
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: "**Client commands** (instant, no server round-trip):\n- `/clear` — Start a new conversation\n- `/cost` — Show accumulated session cost\n- `/help` — Show this message\n\n**Built-in commands** (expanded to prompts for Claude):\n- `/context` — Report what's in context (CLAUDE.md, tools, MCP servers)\n- `/compact [focus]` — Summarize conversation (optionally focused on a topic)\n- `/model` — Report current model\n- `/mcp` — Show MCP server status\n- `/review [PR]` — Code review (current diff or specific PR)\n- `/doctor` — Run project diagnostics\n- `/init` — Initialize/update CLAUDE.md\n\n**Custom commands** (`/catchup`, `/log`, `/push`, etc.) are loaded from `.md` files.\n\nAll non-client `/` commands are expanded server-side and sent to Claude.",
+            content: "**Client commands** (instant, no server round-trip):\n- `/clear` — Start a new conversation\n- `/cost` — Show accumulated session cost\n- `/help` — Show this message\n\n**Custom commands** (`/catchup`, `/log`, `/push`, etc.) are loaded from `.md` files and expanded server-side.\n\nAll other `/` commands (like `/context`, `/compact`, `/model`, etc.) pass through directly to Claude.",
           },
         ]);
         return;

@@ -8,31 +8,8 @@ import type { ChatRequest } from "../types.js";
 const router = Router();
 
 /**
- * Built-in Claude Code commands that are CLI-only.
- * We expand these into equivalent prompts the SDK's Claude can handle.
- */
-const BUILTIN_COMMANDS: Record<string, string | ((args: string, cwd: string) => string)> = {
-  context: (_args, cwd) =>
-    `Report what's currently in your context. Include: project info from CLAUDE.md (check ${cwd}/CLAUDE.md and ${cwd}/.claude/), available tools, configured MCP servers, and approximately how long our conversation has been.`,
-  compact: (args) =>
-    args
-      ? `Provide a concise summary of our conversation so far, focusing on: ${args}. Note: this won't actually free context tokens like the CLI /compact does, but it helps us recap.`
-      : `Provide a concise summary of our conversation so far. Note: this won't actually free context tokens like the CLI /compact does, but it helps us recap.`,
-  doctor: (_args, cwd) =>
-    `Run diagnostics on this project at ${cwd}. Check for common issues: missing dependencies (node_modules), config errors, TypeScript issues, lock file problems, etc. Report what you find.`,
-  init: (_args, cwd) =>
-    `Initialize or update a CLAUDE.md file for this project at ${cwd}. Read the codebase structure, key files, and conventions, then create or update CLAUDE.md with project architecture, instructions, and conventions.`,
-  review: (args) =>
-    args
-      ? `Review this pull request or diff: ${args}. Provide a thorough code review with suggestions.`
-      : "Run `git diff` and provide a thorough code review of the current changes with suggestions.",
-  model: "Report the current model you are running as (model name and ID).",
-  mcp: "Report the MCP servers currently configured and available in this session. List each server name and what tools it provides.",
-};
-
-/**
- * Expand slash commands by reading .md files from project, user, or BASE_DIR command dirs.
- * Also handles built-in Claude Code commands by converting them to prompts.
+ * Expand custom slash commands by reading .md files from project, user, or BASE_DIR command dirs.
+ * Built-in CLI commands (/context, /compact, /model, etc.) pass through as-is — Claude handles them.
  * Returns the expanded prompt, or the original message if no command matched.
  */
 async function expandSlashCommand(
@@ -48,15 +25,7 @@ async function expandSlashCommand(
   const [, cmdName, args] = match;
   const baseDir = process.env.BASE_DIR || "";
 
-  // 1. Check built-in commands first
-  const builtin = BUILTIN_COMMANDS[cmdName];
-  if (builtin) {
-    const expanded = typeof builtin === "function" ? builtin(args.trim(), cwd) : builtin;
-    console.error(`[chat] expanded /${cmdName} via built-in (${expanded.length} chars)`);
-    return expanded;
-  }
-
-  // 2. Search for .md files in priority order:
+  // Search for custom .md command files in priority order:
   //    a. Project-level (.claude/commands/ in the project)
   //    b. User-level (~/.claude/commands/ — may be a symlink)
   //    c. Direct path in BASE_DIR (fallback if symlink doesn't exist on this machine)
