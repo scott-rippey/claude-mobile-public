@@ -473,7 +473,13 @@ router.post("/", async (req, res) => {
           // Track cost, message count, and context usage
           if (m.total_cost_usd) session.totalCostUsd += m.total_cost_usd;
           session.messageCount++;
-          if (m.usage?.input_tokens) session.contextTokens = m.usage.input_tokens;
+          if (m.usage) {
+            // Context size = all input token types (fresh + cache write + cache read)
+            session.contextTokens =
+              (m.usage.input_tokens || 0) +
+              (m.usage.cache_creation_input_tokens || 0) +
+              (m.usage.cache_read_input_tokens || 0);
+          }
           if (m.modelUsage) {
             const modelData = Object.values(m.modelUsage)[0] as { contextWindow?: number } | undefined;
             if (modelData?.contextWindow) session.contextWindow = modelData.contextWindow;
