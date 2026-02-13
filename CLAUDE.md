@@ -1,4 +1,4 @@
-# Claude Mobile
+# Claude Code Mobile
 
 Remote Claude Code interface — access Claude Agent SDK and your iMac's file system from your phone.
 
@@ -15,14 +15,18 @@ Phone → Vercel (Next.js + Google Auth)
 - **Next.js 15.5.12** app with Tailwind CSS (downgraded from 16 — v16 broke middleware auth)
 - **NextAuth** with Google OAuth (only authorized users)
 - **API routes** (`app/api/`) proxy requests to cc-server through Cloudflare Tunnel
-- **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/chat/terminal/file)
-- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage
+- **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/file/chat/terminal/help)
+- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage, ClaudeLogo
 
 ### Backend (`cc-server/` — runs on iMac only)
 - **Express** server on port 3020
 - **Auth middleware** validates shared secret from Vercel API routes
 - **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/terminal` (SSE streaming)
-- **Claude Agent SDK** integration for chat
+- **Claude Agent SDK** integration for chat with `bypassPermissions` and `settingSources: ["project", "user"]`
+- **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
+- **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
+- **In-memory session state** tracks model, context tokens, context window, and cost per sessionId (lost on restart)
+- **Command priority:** built-in → custom .md → pass-through to SDK (covers `/compact` and skills like `/commit`)
 - Runs TypeScript directly via `tsx` — no build/compile step needed
 - `Start CC Server.command` starts both Cloudflare tunnel and server with auto-restart
 - `Start CC Server Local.command` starts server only (no tunnel) for local testing
