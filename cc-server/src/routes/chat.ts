@@ -494,6 +494,15 @@ router.post("/", async (req, res) => {
         }
 
         case "assistant": {
+          // Track per-turn usage (last assistant message = current context size)
+          const assistantUsage = (msg.message as any).usage;
+          if (assistantUsage) {
+            session.contextTokens =
+              (assistantUsage.input_tokens || 0) +
+              (assistantUsage.cache_creation_input_tokens || 0) +
+              (assistantUsage.cache_read_input_tokens || 0);
+          }
+
           for (const block of msg.message.content) {
             if (block.type === "text") {
               sendEvent("assistant", { text: block.text });
@@ -541,16 +550,11 @@ router.post("/", async (req, res) => {
           console.error(`[chat] RESULT: subtype=${m.subtype} is_error=${m.is_error} num_turns=${m.num_turns} duration_ms=${m.duration_ms}`);
           if (m.errors) console.error(`[chat] ERRORS: ${JSON.stringify(m.errors)}`);
 
-          // Track cost, message count, and context usage
+          // Track cost, message count, and context window size
           if (m.total_cost_usd) session.totalCostUsd += m.total_cost_usd;
           session.messageCount++;
-          if (m.usage) {
-            // Context size = all input token types (fresh + cache write + cache read)
-            session.contextTokens =
-              (m.usage.input_tokens || 0) +
-              (m.usage.cache_creation_input_tokens || 0) +
-              (m.usage.cache_read_input_tokens || 0);
-          }
+          // Note: m.usage is CUMULATIVE across all API calls — don't use it for context size.
+          // Context size is tracked per-turn from assistant message usage instead.
           if (m.modelUsage) {
             const modelData = Object.values(m.modelUsage)[0] as { contextWindow?: number } | undefined;
             if (modelData?.contextWindow) session.contextWindow = modelData.contextWindow;
