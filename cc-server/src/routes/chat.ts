@@ -8,9 +8,32 @@ import type { ChatRequest } from "../types.js";
 const router = Router();
 
 /**
- * Expand custom slash commands by reading .md files from project, user, or BASE_DIR command dirs.
- * Built-in CLI commands (/context, /compact, /model, etc.) pass through as-is — Claude handles them.
- * Returns the expanded prompt, or the original message if no command matched.
+ * CLI-only commands that the SDK doesn't handle natively.
+ * These get expanded into prompts so Claude can answer them.
+ *
+ * NOT listed here (SDK handles natively): /compact, /clear
+ * NOT listed here (client-side): /cost, /help
+ */
+const CLI_COMMAND_EXPANSIONS: Record<string, string | ((args: string, cwd: string) => string)> = {
+  context: (_args, cwd) =>
+    `Report what's currently in your context. Include: project info from CLAUDE.md (check ${cwd}/CLAUDE.md and ${cwd}/.claude/), available tools, configured MCP servers, and approximately how long our conversation has been. Format it clearly.`,
+  mcp: "Report the MCP servers currently configured and available in this session. List each server name and what tools it provides.",
+  model: "Report the current model you are running as (model name and ID).",
+  doctor: (_args, cwd) =>
+    `Run diagnostics on this project at ${cwd}. Check for common issues: missing dependencies (node_modules), config errors, TypeScript issues, lock file problems, etc. Report what you find.`,
+  init: (_args, cwd) =>
+    `Initialize or update a CLAUDE.md file for this project at ${cwd}. Read the codebase structure, key files, and conventions, then create or update CLAUDE.md with project architecture, instructions, and conventions.`,
+  review: (args) =>
+    args
+      ? `Review this pull request or diff: ${args}. Provide a thorough code review with suggestions.`
+      : "Run `git diff` and provide a thorough code review of the current changes with suggestions.",
+};
+
+/**
+ * Expand slash commands:
+ * 1. Custom .md files (project, user, BASE_DIR) — highest priority
+ * 2. CLI command expansions for commands the SDK doesn't support
+ * 3. Everything else passes through as-is (SDK-native like /compact, or unknown)
  */
 async function expandSlashCommand(
   message: string,
@@ -25,10 +48,7 @@ async function expandSlashCommand(
   const [, cmdName, args] = match;
   const baseDir = process.env.BASE_DIR || "";
 
-  // Search for custom .md command files in priority order:
-  //    a. Project-level (.claude/commands/ in the project)
-  //    b. User-level (~/.claude/commands/ — may be a symlink)
-  //    c. Direct path in BASE_DIR (fallback if symlink doesn't exist on this machine)
+  // 1. Custom .md command files take priority
   const searchPaths = [
     path.join(cwd, ".claude", "commands", `${cmdName}.md`),
     path.join(os.homedir(), ".claude", "commands", `${cmdName}.md`),
@@ -52,8 +72,16 @@ async function expandSlashCommand(
     }
   }
 
-  // No command file found — pass through as-is
-  console.error(`[chat] WARNING: slash command /${cmdName} not found in any location`);
+  // 2. CLI commands the SDK doesn't support — expand to prompts
+  const cliExpansion = CLI_COMMAND_EXPANSIONS[cmdName];
+  if (cliExpansion) {
+    const expanded = typeof cliExpansion === "function" ? cliExpansion(args.trim(), cwd) : cliExpansion;
+    console.error(`[chat] expanded /${cmdName} via CLI expansion (${expanded.length} chars)`);
+    return expanded;
+  }
+
+  // 3. Pass through as-is (SDK-native commands like /compact, or unknown)
+  console.error(`[chat] passing /${cmdName} through to SDK as-is`);
   return message;
 }
 
