@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, Loader2 } from "lucide-react";
+import { Send, Plus, Loader2, Square } from "lucide-react";
 import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
+import { PermissionModal } from "./PermissionModal";
 import { parseSSEStream } from "@/lib/stream-parser";
 
 interface MessageBlock {
@@ -11,6 +12,14 @@ interface MessageBlock {
   role: "user" | "assistant";
   content: string;
   toolCalls?: { name: string; input: Record<string, unknown>; id: string; result?: string; elapsedSeconds?: number }[];
+}
+
+interface PermissionRequest {
+  requestId: string;
+  queryId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  decisionReason?: string;
 }
 
 interface ChatInterfaceProps {
@@ -37,8 +46,11 @@ export function ChatInterface({
     contextTokens: number;
     contextWindow: number;
   } | null>(null);
+  const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const queryIdRef = useRef<string | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -89,6 +101,9 @@ export function ChatInterface({
     };
     setMessages((prev) => [...prev, assistantMessage]);
 
+    const fetchAbort = new AbortController();
+    abortRef.current = fetchAbort;
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -98,6 +113,7 @@ export function ChatInterface({
           sessionId,
           projectPath,
         }),
+        signal: fetchAbort.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -108,6 +124,21 @@ export function ChatInterface({
 
       for await (const event of parseSSEStream(reader)) {
         switch (event.type) {
+          case "query_start": {
+            queryIdRef.current = event.data.queryId as string;
+            break;
+          }
+          case "permission_request": {
+            const req: PermissionRequest = {
+              requestId: event.data.requestId as string,
+              queryId: event.data.queryId as string,
+              toolName: event.data.toolName as string,
+              input: event.data.input as Record<string, unknown>,
+              decisionReason: event.data.decisionReason as string | undefined,
+            };
+            setPermissionQueue((prev) => [...prev, req]);
+            break;
+          }
           case "init": {
             const newSessionId = event.data.sessionId as string;
             setSessionId(newSessionId);
@@ -252,18 +283,32 @@ export function ChatInterface({
         }
       }
     } catch (err) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? {
-                ...m,
-                content: `**Error:** ${err instanceof Error ? err.message : "Connection failed"}`,
-              }
-            : m
-        )
-      );
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User hit Stop — append stopped indicator
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: m.content + "\n\n*[Stopped]*" }
+              : m
+          )
+        );
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: `**Error:** ${err instanceof Error ? err.message : "Connection failed"}`,
+                }
+              : m
+          )
+        );
+      }
     } finally {
       setIsStreaming(false);
+      abortRef.current = null;
+      queryIdRef.current = null;
+      setPermissionQueue([]);
     }
   };
 
@@ -271,7 +316,40 @@ export function ChatInterface({
     setMessages([]);
     setSessionId(null);
     setSessionStats(null);
+    setPermissionQueue([]);
     localStorage.removeItem(`cc-session-${projectPath}`);
+  };
+
+  const stopQuery = () => {
+    // Abort the fetch connection
+    abortRef.current?.abort();
+    // Fire-and-forget: tell server to abort the SDK query
+    const qId = queryIdRef.current;
+    if (qId) {
+      fetch("/api/chat/abort", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ queryId: qId }),
+      }).catch(() => {});
+    }
+  };
+
+  const handlePermissionAllow = (requestId: string) => {
+    fetch("/api/chat/permission", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, behavior: "allow" }),
+    }).catch(() => {});
+    setPermissionQueue((prev) => prev.filter((p) => p.requestId !== requestId));
+  };
+
+  const handlePermissionDeny = (requestId: string) => {
+    fetch("/api/chat/permission", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, behavior: "deny" }),
+    }).catch(() => {});
+    setPermissionQueue((prev) => prev.filter((p) => p.requestId !== requestId));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -391,19 +469,33 @@ export function ChatInterface({
             }}
             disabled={isStreaming}
           />
-          <button
-            onClick={sendMessage}
-            disabled={!input.trim() || isStreaming}
-            className="flex items-center justify-center w-10 h-10 bg-accent rounded-xl text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-accent/80 transition-colors shrink-0"
-          >
-            {isStreaming ? (
-              <Loader2 className="animate-spin" size={18} />
-            ) : (
+          {isStreaming ? (
+            <button
+              onClick={stopQuery}
+              className="flex items-center justify-center w-10 h-10 bg-red-600 rounded-xl text-white hover:bg-red-500 active:bg-red-700 transition-colors shrink-0"
+            >
+              <Square size={16} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={sendMessage}
+              disabled={!input.trim()}
+              className="flex items-center justify-center w-10 h-10 bg-accent rounded-xl text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-accent/80 transition-colors shrink-0"
+            >
               <Send size={18} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Permission modal */}
+      {permissionQueue.length > 0 && (
+        <PermissionModal
+          request={permissionQueue[0]}
+          onAllow={handlePermissionAllow}
+          onDeny={handlePermissionDeny}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import crypto from "crypto";
 import path from "path";
 import fs from "fs/promises";
 import os from "os";
@@ -7,6 +9,18 @@ import type { ChatRequest } from "../types.js";
 
 const router = Router();
 const DEFAULT_MODEL = "claude-opus-4-6";
+
+// ── Active query tracking (for abort support) ───────────────────────
+const activeAborts = new Map<string, AbortController>();
+
+// ── Pending permission requests ─────────────────────────────────────
+interface PendingPermission {
+  resolve: (result: PermissionResult) => void;
+  reject: (err: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+  input: Record<string, unknown>;
+}
+const pendingPermissions = new Map<string, PendingPermission>();
 
 // ── Session state (in-memory, lost on server restart) ──────────────
 interface SessionState {
@@ -348,10 +362,36 @@ router.post("/", async (req, res) => {
 
   // ── Send to SDK ────────────────────────────────────────────────
   const session = getSession(sessionId);
+  const queryId = crypto.randomUUID();
+  const abortController = new AbortController();
+  activeAborts.set(queryId, abortController);
+
+  // Clean up abort + pending permissions for this query
+  const cleanupQuery = () => {
+    activeAborts.delete(queryId);
+    // Deny all pending permissions for this query
+    for (const [reqId, pending] of pendingPermissions) {
+      if (reqId.startsWith(queryId)) {
+        clearTimeout(pending.timeout);
+        pending.resolve({ behavior: "deny", message: "Query aborted", interrupt: true });
+        pendingPermissions.delete(reqId);
+      }
+    }
+  };
+
+  res.on("close", () => {
+    console.error(`[chat] client disconnected, aborting query ${queryId}`);
+    if (activeAborts.has(queryId)) {
+      abortController.abort();
+    }
+    cleanupQuery();
+  });
 
   try {
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
     console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"} model=${session.model}`);
+
+    sendEvent("query_start", { queryId });
 
     const response = query({
       prompt,
@@ -369,9 +409,40 @@ router.post("/", async (req, res) => {
             args: ["-y", "@upstash/context7-mcp"],
           },
         },
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        permissionMode: "default",
         model: session.model,
+        abortController,
+        canUseTool: (toolName, input, options) => {
+          return new Promise<PermissionResult>((resolve, reject) => {
+            const requestId = `${queryId}:${crypto.randomUUID()}`;
+
+            // Auto-deny after 120s
+            const timeout = setTimeout(() => {
+              console.error(`[chat] permission timeout for ${requestId}`);
+              pendingPermissions.delete(requestId);
+              resolve({ behavior: "deny", message: "Permission request timed out" });
+            }, 120_000);
+
+            pendingPermissions.set(requestId, { resolve, reject, timeout, input });
+
+            // Listen for abort to auto-deny
+            options.signal.addEventListener("abort", () => {
+              if (pendingPermissions.has(requestId)) {
+                clearTimeout(timeout);
+                pendingPermissions.delete(requestId);
+                resolve({ behavior: "deny", message: "Query aborted", interrupt: true });
+              }
+            }, { once: true });
+
+            sendEvent("permission_request", {
+              requestId,
+              queryId,
+              toolName,
+              input,
+              decisionReason: options.decisionReason,
+            });
+          });
+        },
         stderr: (data: string) => console.error(`[chat][stderr] ${data}`),
       },
     });
@@ -528,7 +599,59 @@ router.post("/", async (req, res) => {
     console.error(`[chat] ERROR: ${errMsg}`);
     sendEvent("error", { error: errMsg });
     res.end();
+  } finally {
+    cleanupQuery();
   }
+});
+
+// ── POST /api/chat/abort — abort an active query ────────────────────
+router.post("/abort", (req, res) => {
+  const { queryId } = req.body as { queryId?: string };
+  if (!queryId) {
+    res.status(400).json({ error: "queryId is required" });
+    return;
+  }
+
+  const controller = activeAborts.get(queryId);
+  if (!controller) {
+    res.status(404).json({ error: "Query not found or already finished" });
+    return;
+  }
+
+  console.error(`[chat] aborting query ${queryId}`);
+  controller.abort();
+  res.json({ ok: true });
+});
+
+// ── POST /api/chat/permission — respond to a permission request ─────
+router.post("/permission", (req, res) => {
+  const { requestId, behavior } = req.body as {
+    requestId?: string;
+    behavior?: "allow" | "deny";
+  };
+
+  if (!requestId || !behavior) {
+    res.status(400).json({ error: "requestId and behavior are required" });
+    return;
+  }
+
+  const pending = pendingPermissions.get(requestId);
+  if (!pending) {
+    res.status(404).json({ error: "Permission request not found or already resolved" });
+    return;
+  }
+
+  clearTimeout(pending.timeout);
+  pendingPermissions.delete(requestId);
+
+  if (behavior === "allow") {
+    pending.resolve({ behavior: "allow", updatedInput: pending.input });
+  } else {
+    pending.resolve({ behavior: "deny", message: "User denied permission" });
+  }
+
+  console.error(`[chat] permission ${requestId} → ${behavior}`);
+  res.json({ ok: true });
 });
 
 export default router;
