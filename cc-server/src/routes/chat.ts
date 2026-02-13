@@ -84,10 +84,15 @@ router.post("/", async (req, res) => {
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
     console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"}`);
 
+    // Strip ANTHROPIC_API_KEY so the CLI uses the user's login session (plan)
+    // instead of a potentially stale API key from cc-server's .env
+    const { ANTHROPIC_API_KEY: _, ...cleanEnv } = process.env;
+
     const response = query({
       prompt,
       options: {
         cwd,
+        env: cleanEnv,
         ...(sessionId ? { resume: sessionId } : {}),
         systemPrompt: {
           type: "preset" as const,
@@ -179,6 +184,9 @@ router.post("/", async (req, res) => {
         }
 
         case "result": {
+          console.error(`[chat] RESULT: subtype=${m.subtype} is_error=${m.is_error} num_turns=${m.num_turns} duration_ms=${m.duration_ms} result=${JSON.stringify(m.result)?.slice(0, 500)}`);
+          if (m.errors) console.error(`[chat] ERRORS: ${JSON.stringify(m.errors)}`);
+          if (m.permission_denials?.length) console.error(`[chat] PERMISSION_DENIALS: ${JSON.stringify(m.permission_denials)}`);
           sendEvent("result", {
             subtype: m.subtype,
             result: m.result,
@@ -189,6 +197,11 @@ router.post("/", async (req, res) => {
             durationMs: m.duration_ms,
             sessionId: m.session_id,
           });
+          break;
+        }
+
+        default: {
+          console.error(`[chat] UNHANDLED msg type: ${msg.type} full: ${JSON.stringify(m).slice(0, 500)}`);
           break;
         }
       }
