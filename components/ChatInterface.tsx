@@ -105,19 +105,16 @@ export function ChatInterface({
           const tools = initData.tools as string[] | undefined;
           const mcpServers = initData.mcpServers as Record<string, unknown> | undefined;
           const slashCmds = initData.slashCommands as { name: string; description?: string }[] | undefined;
+          const builtinTools = (tools || []).filter((t) => !t.startsWith("mcp__"));
+          const mcpNames = mcpServers ? Object.keys(mcpServers) : [];
+          const mcpToolCount = (tools || []).filter((t) => t.startsWith("mcp__")).length;
           const lines = ["**Session Context**"];
           if (model) lines.push(`**Model:** ${model}`);
           if (version) lines.push(`**Claude Code:** v${version}`);
-          if (cwd) lines.push(`**CWD:** ${cwd}`);
-          if (tools?.length) lines.push(`\n**Tools (${tools.length}):** ${tools.join(", ")}`);
-          if (mcpServers) {
-            const names = Object.keys(mcpServers);
-            if (names.length) lines.push(`\n**MCP Servers:** ${names.join(", ")}`);
-          }
-          if (slashCmds?.length) {
-            lines.push(`\n**Slash Commands (${slashCmds.length}):**`);
-            slashCmds.forEach((c) => lines.push(`- \`${c.name}\`${c.description ? ` — ${c.description}` : ""}`));
-          }
+          if (cwd) lines.push(`**CWD:** \`${cwd}\``);
+          if (builtinTools.length) lines.push(`**Tools:** ${builtinTools.join(", ")}`);
+          if (mcpNames.length) lines.push(`**MCP Servers (${mcpNames.length}):** ${mcpNames.join(", ")} (${mcpToolCount} tools — use \`/mcp\` for details)`);
+          if (slashCmds?.length) lines.push(`**Slash Commands:** ${slashCmds.length} available (use \`/help\` to list)`);
           content = lines.join("\n");
         } else if (cmd === "/mcp") {
           const mcpServers = initData.mcpServers as Record<string, unknown> | undefined;
