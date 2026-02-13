@@ -34,6 +34,7 @@ export function ChatInterface({
     return null;
   });
   const [sessionCost, setSessionCost] = useState({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
+  const [initData, setInitData] = useState<Record<string, unknown> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -65,7 +66,7 @@ export function ChatInterface({
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: "**Client commands:**\n- `/clear` — Start a new conversation\n- `/cost` — Show accumulated session cost\n- `/help` — Show this message\n\n**All other `/` commands** (including `/context`, `/compact`, `/model`, `/mcp`, etc.) pass through to the SDK.\n\n**Custom commands** (`/catchup`, `/log`, etc.) are expanded from `.md` files before sending.",
+            content: "**Instant commands** (real SDK data, no round-trip):\n- `/context` — Session info (model, tools, MCP servers, commands)\n- `/mcp` — MCP servers and their tools\n- `/model` — Current model\n- `/cost` — Accumulated session cost\n- `/clear` — Start a new conversation\n- `/help` — This message\n\n**SDK commands** (sent to Claude):\n- `/compact [focus]` — Compress conversation history\n\n**Custom commands** (`/catchup`, `/log`, `/push`, etc.) — expanded from `.md` files.\n\nAnything else passes through to the SDK as-is.",
           },
         ]);
         return;
@@ -88,6 +89,61 @@ export function ChatInterface({
               ? "No cost data yet — send a message first."
               : `**Session Cost**\n- Total: $${cost.toFixed(4)}\n- Duration: ${durationStr}\n- Turns: ${turns}`,
           },
+        ]);
+        return;
+      }
+      // SDK doesn't support /context, /mcp, /model — handle client-side from real init data
+      if (cmd === "/context" || cmd === "/mcp" || cmd === "/model") {
+        setInput("");
+        let content: string;
+        if (!initData) {
+          content = "No session data yet — send a message first to initialize.";
+        } else if (cmd === "/context") {
+          const model = initData.model as string | undefined;
+          const version = initData.claudeCodeVersion as string | undefined;
+          const cwd = initData.cwd as string | undefined;
+          const tools = initData.tools as string[] | undefined;
+          const mcpServers = initData.mcpServers as Record<string, unknown> | undefined;
+          const slashCmds = initData.slashCommands as { name: string; description?: string }[] | undefined;
+          const lines = ["**Session Context**"];
+          if (model) lines.push(`**Model:** ${model}`);
+          if (version) lines.push(`**Claude Code:** v${version}`);
+          if (cwd) lines.push(`**CWD:** ${cwd}`);
+          if (tools?.length) lines.push(`\n**Tools (${tools.length}):** ${tools.join(", ")}`);
+          if (mcpServers) {
+            const names = Object.keys(mcpServers);
+            if (names.length) lines.push(`\n**MCP Servers:** ${names.join(", ")}`);
+          }
+          if (slashCmds?.length) {
+            lines.push(`\n**Slash Commands (${slashCmds.length}):**`);
+            slashCmds.forEach((c) => lines.push(`- \`${c.name}\`${c.description ? ` — ${c.description}` : ""}`));
+          }
+          content = lines.join("\n");
+        } else if (cmd === "/mcp") {
+          const mcpServers = initData.mcpServers as Record<string, unknown> | undefined;
+          const tools = initData.tools as string[] | undefined;
+          if (!mcpServers || Object.keys(mcpServers).length === 0) {
+            content = "No MCP servers configured.";
+          } else {
+            const lines = ["**MCP Servers**"];
+            for (const name of Object.keys(mcpServers)) {
+              const serverTools = (tools || []).filter((t) => t.startsWith(`mcp__${name}__`));
+              lines.push(`\n**${name}**`);
+              if (serverTools.length) {
+                serverTools.forEach((t) => lines.push(`- \`${t.replace(`mcp__${name}__`, "")}\``));
+              } else {
+                lines.push("- (no tools registered)");
+              }
+            }
+            content = lines.join("\n");
+          }
+        } else {
+          content = `**Model:** ${(initData.model as string) || "unknown"}`;
+        }
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "user", content: trimmed },
+          { id: crypto.randomUUID(), role: "assistant", content },
         ]);
         return;
       }
@@ -136,6 +192,7 @@ export function ChatInterface({
           case "init": {
             const newSessionId = event.data.sessionId as string;
             setSessionId(newSessionId);
+            setInitData(event.data);
             localStorage.setItem(`cc-session-${projectPath}`, newSessionId);
             break;
           }
@@ -300,6 +357,7 @@ export function ChatInterface({
     setMessages([]);
     setSessionId(null);
     setSessionCost({ totalCostUsd: 0, totalDurationMs: 0, totalTurns: 0 });
+    setInitData(null);
     localStorage.removeItem(`cc-session-${projectPath}`);
   };
 
