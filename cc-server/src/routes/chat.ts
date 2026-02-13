@@ -81,6 +81,8 @@ router.post("/", async (req, res) => {
   try {
     // Expand slash commands (e.g. /catchup → full prompt from .md file)
     const prompt = await expandSlashCommand(message, cwd);
+    console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
+    console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"}`);
 
     const response = query({
       prompt,
@@ -102,9 +104,11 @@ router.post("/", async (req, res) => {
       },
     });
 
+    let eventCount = 0;
     for await (const msg of response) {
       const m = msg as any;
       console.error(`[chat] msg.type=${msg.type}${m.subtype ? ` subtype=${m.subtype}` : ""}`);
+      eventCount++;
 
       switch (msg.type) {
         case "system": {
@@ -190,11 +194,16 @@ router.post("/", async (req, res) => {
       }
     }
 
+    console.error(`[chat] stream ended. ${eventCount} events received`);
+    if (eventCount === 0) {
+      sendEvent("error", { error: "SDK returned no events" });
+    }
     sendEvent("done", {});
     res.end();
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    sendEvent("error", { error: message });
+    const errMsg = err instanceof Error ? err.stack || err.message : String(err);
+    console.error(`[chat] ERROR: ${errMsg}`);
+    sendEvent("error", { error: errMsg });
     res.end();
   }
 });

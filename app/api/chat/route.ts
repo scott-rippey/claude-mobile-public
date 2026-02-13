@@ -1,6 +1,9 @@
 import { NextRequest } from "next/server";
 import { serverFetch } from "@/lib/server-api";
 
+// SDK initialization (MCP servers, plugins) can take 30s+
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   const body = await request.json();
 
