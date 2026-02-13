@@ -6,16 +6,44 @@ import os from "os";
 import type { ChatRequest } from "../types.js";
 
 const router = Router();
+const DEFAULT_MODEL = "claude-opus-4-6";
 
-// Expand custom .md slash commands — everything else passes through raw
+// ── Session state (in-memory, lost on server restart) ──────────────
+interface SessionState {
+  model: string;
+  totalCostUsd: number;
+  messageCount: number;
+  lastInit?: {
+    tools: string[];
+    mcpServers: { name: string; status: string }[];
+    slashCommands: string[];
+    skills: string[];
+    plugins: { name: string; path: string }[];
+    claudeCodeVersion: string;
+    cwd: string;
+  };
+}
+
+const sessions = new Map<string, SessionState>();
+
+function getSession(sessionId: string | undefined): SessionState {
+  if (sessionId && sessions.has(sessionId)) return sessions.get(sessionId)!;
+  return { model: DEFAULT_MODEL, totalCostUsd: 0, messageCount: 0 };
+}
+
+function saveSession(sessionId: string, state: SessionState) {
+  sessions.set(sessionId, state);
+}
+
+// ── Expand custom .md slash commands ───────────────────────────────
 async function expandSlashCommand(
   message: string,
   cwd: string
-): Promise<string> {
-  if (!message.startsWith("/")) return message;
+): Promise<string | null> {
+  if (!message.startsWith("/")) return null;
 
   const match = message.match(/^\/(\S+)\s*(.*)/s);
-  if (!match) return message;
+  if (!match) return null;
 
   const [, cmdName, args] = match;
   const baseDir = process.env.BASE_DIR || "";
@@ -38,10 +66,220 @@ async function expandSlashCommand(
     }
   }
 
-  return message;
+  return null; // No custom command found
 }
 
-// POST /api/chat — SSE streaming response
+// ── Find all custom .md commands on disk ───────────────────────────
+async function findCustomCommands(cwd: string): Promise<{ name: string; source: string }[]> {
+  const baseDir = process.env.BASE_DIR || "";
+  const dirs = [
+    { dir: path.join(cwd, ".claude", "commands"), source: "project" },
+    { dir: path.join(os.homedir(), ".claude", "commands"), source: "user" },
+    { dir: path.join(baseDir, "slash commands"), source: "global" },
+  ];
+
+  const commands: { name: string; source: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const { dir, source } of dirs) {
+    try {
+      const entries = await fs.readdir(dir);
+      for (const entry of entries) {
+        if (entry.endsWith(".md")) {
+          const name = entry.replace(/\.md$/, "");
+          if (!seen.has(name)) {
+            seen.add(name);
+            commands.push({ name, source });
+          }
+        }
+      }
+    } catch {
+      // Directory doesn't exist
+    }
+  }
+
+  return commands;
+}
+
+// ── Read a file safely (returns null on error) ─────────────────────
+async function readFileSafe(filePath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+// ── Built-in command handlers ──────────────────────────────────────
+type SendEvent = (type: string, data: unknown) => void;
+
+interface CommandContext {
+  sendEvent: SendEvent;
+  cwd: string;
+  sessionId: string | undefined;
+  session: SessionState;
+  args: string;
+}
+
+async function handleHelp(ctx: CommandContext) {
+  const customCmds = await findCustomCommands(ctx.cwd);
+
+  let text = "## Available Commands\n\n";
+  text += "### Built-in\n";
+  text += "| Command | Description |\n";
+  text += "|---------|-------------|\n";
+  text += "| `/clear` | Clear conversation and start fresh (client-side) |\n";
+  text += "| `/help` | Show this help |\n";
+  text += "| `/context` | Show current project context |\n";
+  text += "| `/model [name]` | Show or change the model |\n";
+  text += "| `/cost` | Show session cost |\n";
+  text += "| `/mcp` | Show MCP server status |\n";
+  text += "| `/compact` | Info about conversation compaction |\n";
+  text += "| `/status` | Show session status |\n";
+
+  if (customCmds.length > 0) {
+    text += "\n### Custom Commands\n";
+    text += "| Command | Source |\n";
+    text += "|---------|--------|\n";
+    for (const cmd of customCmds) {
+      text += `| \`/${cmd.name}\` | ${cmd.source} |\n`;
+    }
+  }
+
+  if (ctx.session.lastInit?.skills?.length) {
+    text += "\n### Skills\n";
+    text += "| Skill |\n";
+    text += "|-------|\n";
+    for (const skill of ctx.session.lastInit.skills) {
+      text += `| \`/${skill}\` |\n`;
+    }
+  }
+
+  ctx.sendEvent("assistant", { text });
+}
+
+async function handleContext(ctx: CommandContext) {
+  let text = "## Project Context\n\n";
+  text += `**Working directory:** \`${ctx.cwd}\`\n\n`;
+
+  // Read CLAUDE.md files
+  const claudeMdPaths = [
+    { path: path.join(ctx.cwd, "CLAUDE.md"), label: "Project CLAUDE.md" },
+    { path: path.join(os.homedir(), ".claude", "CLAUDE.md"), label: "User CLAUDE.md" },
+  ];
+
+  for (const { path: p, label } of claudeMdPaths) {
+    const content = await readFileSafe(p);
+    if (content) {
+      const preview = content.length > 500 ? content.slice(0, 500) + "\n...(truncated)" : content;
+      text += `### ${label}\n\`${p}\`\n\n\`\`\`\n${preview}\n\`\`\`\n\n`;
+    }
+  }
+
+  // Show init data if available
+  const init = ctx.session.lastInit;
+  if (init) {
+    if (init.mcpServers?.length) {
+      text += "### MCP Servers\n";
+      for (const s of init.mcpServers) {
+        const icon = s.status === "connected" ? "+" : "-";
+        text += `- ${icon} **${s.name}** (${s.status})\n`;
+      }
+      text += "\n";
+    }
+
+    if (init.tools?.length) {
+      text += `### Tools\n${init.tools.length} tools available: ${init.tools.slice(0, 10).join(", ")}${init.tools.length > 10 ? `, ... (+${init.tools.length - 10} more)` : ""}\n\n`;
+    }
+
+    if (init.plugins?.length) {
+      text += "### Plugins\n";
+      for (const p of init.plugins) {
+        text += `- **${p.name}** (\`${p.path}\`)\n`;
+      }
+      text += "\n";
+    }
+  } else {
+    text += "*Send a message first to load full SDK context (MCP servers, tools, plugins).*\n";
+  }
+
+  ctx.sendEvent("assistant", { text });
+}
+
+async function handleModel(ctx: CommandContext) {
+  const newModel = ctx.args.trim();
+
+  if (newModel) {
+    ctx.session.model = newModel;
+    if (ctx.sessionId) saveSession(ctx.sessionId, ctx.session);
+    ctx.sendEvent("assistant", { text: `Model changed to **${newModel}**. Next message will use this model.` });
+  } else {
+    ctx.sendEvent("assistant", { text: `Current model: **${ctx.session.model}**\n\nUsage: \`/model <model-name>\`\n\nExamples:\n- \`/model claude-sonnet-4-5-20250929\`\n- \`/model claude-opus-4-6\`\n- \`/model claude-haiku-4-5-20251001\`` });
+  }
+}
+
+async function handleCost(ctx: CommandContext) {
+  const cost = ctx.session.totalCostUsd;
+  const msgs = ctx.session.messageCount;
+  ctx.sendEvent("assistant", {
+    text: `## Session Cost\n\n- **Total:** $${cost.toFixed(4)}\n- **Messages:** ${msgs}\n- **Model:** ${ctx.session.model}`,
+  });
+}
+
+async function handleMcp(ctx: CommandContext) {
+  const init = ctx.session.lastInit;
+  if (!init?.mcpServers?.length) {
+    ctx.sendEvent("assistant", {
+      text: "No MCP server data available yet. Send a message first to initialize the SDK session.",
+    });
+    return;
+  }
+
+  let text = "## MCP Servers\n\n";
+  for (const s of init.mcpServers) {
+    const icon = s.status === "connected" ? "+" : s.status === "failed" ? "x" : "?";
+    text += `- ${icon} **${s.name}** — ${s.status}\n`;
+  }
+  ctx.sendEvent("assistant", { text });
+}
+
+async function handleCompact(ctx: CommandContext) {
+  ctx.sendEvent("assistant", {
+    text: "## Conversation Compaction\n\nThe SDK handles compaction **automatically** when the conversation approaches the context limit. You'll see a \"compacting...\" status when this happens.\n\nTo manually start fresh, use `/clear` to reset the conversation.",
+  });
+}
+
+async function handleStatus(ctx: CommandContext) {
+  const init = ctx.session.lastInit;
+  let text = "## Session Status\n\n";
+  text += `- **Session ID:** ${ctx.sessionId || "none (new session)"}\n`;
+  text += `- **Model:** ${ctx.session.model}\n`;
+  text += `- **Messages:** ${ctx.session.messageCount}\n`;
+  text += `- **Cost:** $${ctx.session.totalCostUsd.toFixed(4)}\n`;
+  text += `- **Working directory:** \`${ctx.cwd}\`\n`;
+
+  if (init) {
+    text += `- **Claude Code version:** ${init.claudeCodeVersion}\n`;
+    text += `- **Tools:** ${init.tools?.length || 0}\n`;
+    text += `- **MCP Servers:** ${init.mcpServers?.length || 0}\n`;
+    text += `- **Skills:** ${init.skills?.length || 0}\n`;
+    text += `- **Plugins:** ${init.plugins?.length || 0}\n`;
+  }
+
+  ctx.sendEvent("assistant", { text });
+}
+
+const BUILTIN_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void>> = {
+  help: handleHelp,
+  context: handleContext,
+  model: handleModel,
+  cost: handleCost,
+  mcp: handleMcp,
+  compact: handleCompact,
+  status: handleStatus,
+};
+
+// ── POST /api/chat — SSE streaming response ────────────────────────
 router.post("/", async (req, res) => {
   const baseDir = process.env.BASE_DIR!;
   const { message, sessionId, projectPath } = req.body as ChatRequest;
@@ -68,10 +306,41 @@ router.post("/", async (req, res) => {
     res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
   };
 
+  // ── Check for built-in commands first ──────────────────────────
+  if (message.startsWith("/")) {
+    const cmdMatch = message.match(/^\/(\S+)\s*(.*)/s);
+    if (cmdMatch) {
+      const [, cmdName, cmdArgs] = cmdMatch;
+      const handler = BUILTIN_COMMANDS[cmdName.toLowerCase()];
+      if (handler) {
+        console.error(`[chat] built-in command: /${cmdName}`);
+        const session = getSession(sessionId);
+        try {
+          await handler({ sendEvent, cwd, sessionId, session, args: cmdArgs });
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          sendEvent("error", { error: errMsg });
+        }
+        sendEvent("done", {});
+        res.end();
+        return;
+      }
+    }
+  }
+
+  // ── Check for custom .md commands ──────────────────────────────
+  let prompt = message;
+  const expanded = await expandSlashCommand(message, cwd);
+  if (expanded !== null) {
+    prompt = expanded;
+  }
+
+  // ── Send to SDK ────────────────────────────────────────────────
+  const session = getSession(sessionId);
+
   try {
-    const prompt = await expandSlashCommand(message, cwd);
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
-    console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"}`);
+    console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"} model=${session.model}`);
 
     const response = query({
       prompt,
@@ -91,12 +360,14 @@ router.post("/", async (req, res) => {
         },
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        model: "claude-opus-4-6",
+        model: session.model,
         stderr: (data: string) => console.error(`[chat][stderr] ${data}`),
       },
     });
 
     let eventCount = 0;
+    let resultSessionId = sessionId;
+
     for await (const msg of response) {
       const m = msg as any;
       console.error(`[chat] msg.type=${msg.type}${m.subtype ? ` subtype=${m.subtype}` : ""}`);
@@ -105,6 +376,20 @@ router.post("/", async (req, res) => {
       switch (msg.type) {
         case "system": {
           if (m.subtype === "init") {
+            resultSessionId = m.session_id;
+
+            // Track init data in session state
+            session.lastInit = {
+              tools: m.tools,
+              mcpServers: m.mcp_servers,
+              slashCommands: m.slash_commands,
+              skills: m.skills,
+              plugins: m.plugins,
+              claudeCodeVersion: m.claude_code_version,
+              cwd: m.cwd,
+            };
+            saveSession(m.session_id, session);
+
             sendEvent("init", {
               sessionId: m.session_id,
               tools: m.tools,
@@ -173,6 +458,12 @@ router.post("/", async (req, res) => {
         case "result": {
           console.error(`[chat] RESULT: subtype=${m.subtype} is_error=${m.is_error} num_turns=${m.num_turns} duration_ms=${m.duration_ms}`);
           if (m.errors) console.error(`[chat] ERRORS: ${JSON.stringify(m.errors)}`);
+
+          // Track cost and message count
+          if (m.total_cost_usd) session.totalCostUsd += m.total_cost_usd;
+          session.messageCount++;
+          if (resultSessionId) saveSession(resultSessionId, session);
+
           sendEvent("result", {
             subtype: m.subtype,
             result: m.result,
