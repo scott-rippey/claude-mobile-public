@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Folder,
+  FolderPlus,
   FileText,
   FileCode,
   ChevronRight,
   MessageSquare,
   Loader2,
+  Check,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -46,9 +49,13 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [mkdirError, setMkdirError] = useState<string | null>(null);
+  const [mkdirLoading, setMkdirLoading] = useState(false);
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const fetchEntries = (cancelled = false) => {
     fetch(`/api/files?path=${encodeURIComponent(path)}`)
       .then((res) => res.json())
       .then((data) => {
@@ -67,8 +74,53 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEntries(cancelled);
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
+
+  useEffect(() => {
+    if (creatingFolder) {
+      newFolderInputRef.current?.focus();
+    }
+  }, [creatingFolder]);
+
+  const handleCreateFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    setMkdirError(null);
+    setMkdirLoading(true);
+    try {
+      const res = await fetch("/api/files/mkdir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMkdirError(data.error || "Failed to create folder");
+        return;
+      }
+      setCreatingFolder(false);
+      setNewFolderName("");
+      setMkdirError(null);
+      fetchEntries();
+    } catch {
+      setMkdirError("Failed to connect to server");
+    } finally {
+      setMkdirLoading(false);
+    }
+  };
+
+  const cancelCreateFolder = () => {
+    setCreatingFolder(false);
+    setNewFolderName("");
+    setMkdirError(null);
+  };
 
   if (loading) {
     return (
@@ -106,7 +158,54 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
         </Link>
       )}
 
+      {!isEmbedded && !creatingFolder && (
+        <button
+          onClick={() => setCreatingFolder(true)}
+          className="flex items-center gap-2 px-4 py-2.5 mb-2 text-sm text-muted hover:text-foreground hover:bg-card rounded-lg transition-colors"
+        >
+          <FolderPlus size={18} />
+          <span>New Folder</span>
+        </button>
+      )}
+
       <div className="divide-y divide-border">
+        {creatingFolder && (
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Folder size={20} className="text-accent shrink-0" />
+              <input
+                ref={newFolderInputRef}
+                type="text"
+                value={newFolderName}
+                onChange={(e) => { setNewFolderName(e.target.value); setMkdirError(null); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateFolder();
+                  if (e.key === "Escape") cancelCreateFolder();
+                }}
+                placeholder="Folder name"
+                disabled={mkdirLoading}
+                className="flex-1 min-w-0 bg-background border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-accent"
+              />
+              <button
+                onClick={handleCreateFolder}
+                disabled={mkdirLoading || !newFolderName.trim()}
+                className="p-1.5 text-green-400 hover:bg-green-400/10 rounded disabled:opacity-40"
+              >
+                {mkdirLoading ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+              </button>
+              <button
+                onClick={cancelCreateFolder}
+                disabled={mkdirLoading}
+                className="p-1.5 text-red-400 hover:bg-red-400/10 rounded disabled:opacity-40"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {mkdirError && (
+              <div className="text-xs text-red-400 mt-1.5 ml-7">{mkdirError}</div>
+            )}
+          </div>
+        )}
         {entries.map((entry) => {
           const Icon =
             entry.type === "directory" ? Folder : getFileIcon(entry.name);
