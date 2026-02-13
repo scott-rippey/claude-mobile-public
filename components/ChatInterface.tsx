@@ -178,9 +178,24 @@ export function ChatInterface({
             break;
           }
           case "result": {
-            // Result comes with final text; update if we have it
+            const isError = event.data.isError as boolean | undefined;
+            const errors = event.data.errors as string[] | undefined;
             const result = event.data.result as string | undefined;
-            if (result) {
+
+            if (isError && errors?.length) {
+              // Show SDK error results that were previously swallowed
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content: m.content + `\n\n**Error:** ${errors.join("\n")}`,
+                      }
+                    : m
+                )
+              );
+            } else if (result) {
+              // Use result text as fallback if no streamed content
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId && !m.content
@@ -292,10 +307,11 @@ export function ChatInterface({
                 ))}
                 {/* Text content */}
                 {msg.content && <StreamingMessage content={msg.content} />}
-                {/* Streaming indicator */}
+                {/* Streaming indicator — hide once tool calls or content appear */}
                 {isStreaming &&
                   msg === messages[messages.length - 1] &&
-                  !msg.content && (
+                  !msg.content &&
+                  (!msg.toolCalls || msg.toolCalls.length === 0) && (
                     <div className="flex items-center gap-2 text-muted text-sm py-2">
                       <Loader2 className="animate-spin" size={14} />
                       Thinking...
