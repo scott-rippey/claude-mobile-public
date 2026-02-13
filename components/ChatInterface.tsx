@@ -199,6 +199,24 @@ export function ChatInterface({
             );
             break;
           }
+          case "system": {
+            // SDK system events (compact_boundary, context info, etc.)
+            const subtype = event.data.subtype as string;
+            const sysContent = event.data.result as string | undefined;
+            if (sysContent) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, content: m.content + sysContent }
+                    : m
+                )
+              );
+            } else {
+              // Log the raw event data for subtypes that don't have a result string
+              console.log(`[system event] subtype=${subtype}`, event.data);
+            }
+            break;
+          }
           case "result": {
             const isError = event.data.isError as boolean | undefined;
             const errors = event.data.errors as string[] | undefined;

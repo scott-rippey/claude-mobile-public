@@ -143,6 +143,9 @@ router.post("/", async (req, res) => {
             });
           } else if (m.subtype === "status") {
             sendEvent("status", { status: m.status });
+          } else {
+            // Forward all other system subtypes (compact_boundary, context info, etc.)
+            sendEvent("system", { subtype: m.subtype, ...m });
           }
           break;
         }
