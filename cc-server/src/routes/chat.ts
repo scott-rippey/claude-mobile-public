@@ -13,6 +13,8 @@ interface SessionState {
   model: string;
   totalCostUsd: number;
   messageCount: number;
+  contextTokens: number;   // Last input_tokens (current context size)
+  contextWindow: number;   // Max context window for the model
   lastInit?: {
     tools: string[];
     mcpServers: { name: string; status: string }[];
@@ -28,7 +30,7 @@ const sessions = new Map<string, SessionState>();
 
 function getSession(sessionId: string | undefined): SessionState {
   if (sessionId && sessions.has(sessionId)) return sessions.get(sessionId)!;
-  return { model: DEFAULT_MODEL, totalCostUsd: 0, messageCount: 0 };
+  return { model: DEFAULT_MODEL, totalCostUsd: 0, messageCount: 0, contextTokens: 0, contextWindow: 0 };
 }
 
 function saveSession(sessionId: string, state: SessionState) {
@@ -219,11 +221,14 @@ async function handleModel(ctx: CommandContext) {
 }
 
 async function handleCost(ctx: CommandContext) {
-  const cost = ctx.session.totalCostUsd;
-  const msgs = ctx.session.messageCount;
-  ctx.sendEvent("assistant", {
-    text: `## Session Cost\n\n- **Total:** $${cost.toFixed(4)}\n- **Messages:** ${msgs}\n- **Model:** ${ctx.session.model}`,
-  });
+  const { totalCostUsd, messageCount, contextTokens, contextWindow, model } = ctx.session;
+  const pct = contextWindow > 0 ? ((contextTokens / contextWindow) * 100).toFixed(1) : "?";
+  let text = `## Session Cost\n\n`;
+  text += `- **Total:** $${totalCostUsd.toFixed(4)}\n`;
+  text += `- **Messages:** ${messageCount}\n`;
+  text += `- **Model:** ${model}\n`;
+  text += `- **Context:** ${(contextTokens / 1000).toFixed(1)}k / ${(contextWindow / 1000).toFixed(0)}k tokens (${pct}%)`;
+  ctx.sendEvent("assistant", { text });
 }
 
 async function handleMcp(ctx: CommandContext) {
@@ -249,13 +254,26 @@ async function handleCompact(ctx: CommandContext) {
   });
 }
 
+async function handleClear(ctx: CommandContext) {
+  // Delete session state from memory
+  if (ctx.sessionId) {
+    sessions.delete(ctx.sessionId);
+    console.error(`[chat] cleared session state for ${ctx.sessionId}`);
+  }
+  ctx.sendEvent("assistant", { text: "Session cleared." });
+}
+
 async function handleStatus(ctx: CommandContext) {
+  const { model, messageCount, totalCostUsd, contextTokens, contextWindow } = ctx.session;
   const init = ctx.session.lastInit;
+  const pct = contextWindow > 0 ? ((contextTokens / contextWindow) * 100).toFixed(1) : "?";
+
   let text = "## Session Status\n\n";
   text += `- **Session ID:** ${ctx.sessionId || "none (new session)"}\n`;
-  text += `- **Model:** ${ctx.session.model}\n`;
-  text += `- **Messages:** ${ctx.session.messageCount}\n`;
-  text += `- **Cost:** $${ctx.session.totalCostUsd.toFixed(4)}\n`;
+  text += `- **Model:** ${model}\n`;
+  text += `- **Messages:** ${messageCount}\n`;
+  text += `- **Cost:** $${totalCostUsd.toFixed(4)}\n`;
+  text += `- **Context:** ${(contextTokens / 1000).toFixed(1)}k / ${(contextWindow / 1000).toFixed(0)}k tokens (${pct}%)\n`;
   text += `- **Working directory:** \`${ctx.cwd}\`\n`;
 
   if (init) {
@@ -270,6 +288,7 @@ async function handleStatus(ctx: CommandContext) {
 }
 
 const BUILTIN_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void>> = {
+  clear: handleClear,
   help: handleHelp,
   context: handleContext,
   model: handleModel,
@@ -459,9 +478,14 @@ router.post("/", async (req, res) => {
           console.error(`[chat] RESULT: subtype=${m.subtype} is_error=${m.is_error} num_turns=${m.num_turns} duration_ms=${m.duration_ms}`);
           if (m.errors) console.error(`[chat] ERRORS: ${JSON.stringify(m.errors)}`);
 
-          // Track cost and message count
+          // Track cost, message count, and context usage
           if (m.total_cost_usd) session.totalCostUsd += m.total_cost_usd;
           session.messageCount++;
+          if (m.usage?.input_tokens) session.contextTokens = m.usage.input_tokens;
+          if (m.modelUsage) {
+            const modelData = Object.values(m.modelUsage)[0] as { contextWindow?: number } | undefined;
+            if (modelData?.contextWindow) session.contextWindow = modelData.contextWindow;
+          }
           if (resultSessionId) saveSession(resultSessionId, session);
 
           sendEvent("result", {
@@ -473,6 +497,9 @@ router.post("/", async (req, res) => {
             totalCostUsd: m.total_cost_usd,
             durationMs: m.duration_ms,
             sessionId: m.session_id,
+            contextTokens: session.contextTokens,
+            contextWindow: session.contextWindow,
+            sessionCostUsd: session.totalCostUsd,
           });
           break;
         }

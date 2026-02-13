@@ -33,6 +33,10 @@ export function ChatInterface({
     }
     return null;
   });
+  const [sessionStats, setSessionStats] = useState<{
+    contextTokens: number;
+    contextWindow: number;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -48,10 +52,19 @@ export function ChatInterface({
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
 
-    // /clear is the only client-side command (resets local state)
+    // /clear — clear UI instantly + notify server to clean up session state
     if (trimmed.toLowerCase() === "/clear") {
       setInput("");
+      const oldSessionId = sessionId;
       startNewConversation();
+      // Fire-and-forget: tell server to clean up session state
+      if (oldSessionId) {
+        fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: "/clear", sessionId: oldSessionId, projectPath }),
+        }).catch(() => {});
+      }
       return;
     }
     // Everything else goes to the server (built-in commands, custom .md, SDK pass-through)
@@ -207,6 +220,13 @@ export function ChatInterface({
                 )
               );
             }
+            // Update session stats from result event
+            const contextTokens = event.data.contextTokens as number | undefined;
+            const contextWindow = event.data.contextWindow as number | undefined;
+            if (contextTokens !== undefined && contextWindow !== undefined) {
+              setSessionStats({ contextTokens, contextWindow });
+            }
+
             const sid = event.data.sessionId as string | undefined;
             if (sid) {
               setSessionId(sid);
@@ -250,6 +270,7 @@ export function ChatInterface({
   const startNewConversation = () => {
     setMessages([]);
     setSessionId(null);
+    setSessionStats(null);
     localStorage.removeItem(`cc-session-${projectPath}`);
   };
 
@@ -327,9 +348,33 @@ export function ChatInterface({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
-      <div className="border-t border-border px-4 py-3 shrink-0">
-        <div className="flex items-end gap-2">
+      {/* Context bar + Input area */}
+      <div className="border-t border-border shrink-0">
+        {sessionStats && sessionStats.contextWindow > 0 && (
+          <div className="px-4 pt-2 pb-0">
+            <div className="flex items-center justify-between text-[11px] text-muted mb-1">
+              <span>
+                {(sessionStats.contextTokens / 1000).toFixed(1)}k / {(sessionStats.contextWindow / 1000).toFixed(0)}k tokens
+              </span>
+              <span>
+                {((sessionStats.contextTokens / sessionStats.contextWindow) * 100).toFixed(0)}% used
+              </span>
+            </div>
+            <div className="h-1 bg-border rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  sessionStats.contextTokens / sessionStats.contextWindow > 0.8
+                    ? "bg-red-500"
+                    : sessionStats.contextTokens / sessionStats.contextWindow > 0.6
+                      ? "bg-yellow-500"
+                      : "bg-accent"
+                }`}
+                style={{ width: `${Math.min((sessionStats.contextTokens / sessionStats.contextWindow) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+        <div className="flex items-end gap-2 px-4 py-3">
           <textarea
             ref={inputRef}
             value={input}
