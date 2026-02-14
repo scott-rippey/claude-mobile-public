@@ -28,12 +28,53 @@ interface ChatInterfaceProps {
   embedded?: boolean;
 }
 
+// ── localStorage persistence for chat history ──────────────────────
+const CHAT_STORAGE_PREFIX = "cc-chat-";
+
+interface PersistedChat {
+  messages: MessageBlock[];
+  sessionStats: { contextTokens: number; contextWindow: number } | null;
+}
+
+function loadPersistedChat(projectPath: string): PersistedChat {
+  try {
+    const raw = localStorage.getItem(`${CHAT_STORAGE_PREFIX}${projectPath}`);
+    if (raw) {
+      const parsed = JSON.parse(raw) as PersistedChat;
+      if (Array.isArray(parsed.messages)) return parsed;
+    }
+  } catch {
+    // Corrupted data — start fresh
+  }
+  return { messages: [], sessionStats: null };
+}
+
+function savePersistedChat(projectPath: string, messages: MessageBlock[], sessionStats: { contextTokens: number; contextWindow: number } | null) {
+  const data: PersistedChat = { messages, sessionStats };
+  try {
+    localStorage.setItem(`${CHAT_STORAGE_PREFIX}${projectPath}`, JSON.stringify(data));
+  } catch {
+    // QuotaExceededError — trim oldest messages and retry once
+    try {
+      const trimmed = messages.slice(-50);
+      localStorage.setItem(`${CHAT_STORAGE_PREFIX}${projectPath}`, JSON.stringify({ messages: trimmed, sessionStats }));
+    } catch {
+      // Still too large — give up silently
+    }
+  }
+}
+
 export function ChatInterface({
   projectPath,
   projectName,
   embedded = false,
 }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<MessageBlock[]>([]);
+  const [messages, setMessages] = useState<MessageBlock[]>(() => {
+    if (typeof window !== "undefined") {
+      return loadPersistedChat(projectPath).messages;
+    }
+    return [];
+  });
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(() => {
@@ -45,7 +86,12 @@ export function ChatInterface({
   const [sessionStats, setSessionStats] = useState<{
     contextTokens: number;
     contextWindow: number;
-  } | null>(null);
+  } | null>(() => {
+    if (typeof window !== "undefined") {
+      return loadPersistedChat(projectPath).sessionStats;
+    }
+    return null;
+  });
   const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -62,6 +108,11 @@ export function ChatInterface({
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // Persist messages + sessionStats to localStorage on every change
+  useEffect(() => {
+    savePersistedChat(projectPath, messages, sessionStats);
+  }, [projectPath, messages, sessionStats]);
 
   // Detect browser resume after suspend (screen off, tab switch)
   // If we were streaming when suspended, the connection is likely dead
@@ -366,6 +417,7 @@ export function ChatInterface({
     setSessionStats(null);
     setPermissionQueue([]);
     localStorage.removeItem(`cc-session-${projectPath}`);
+    localStorage.removeItem(`${CHAT_STORAGE_PREFIX}${projectPath}`);
   };
 
   const stopQuery = () => {
