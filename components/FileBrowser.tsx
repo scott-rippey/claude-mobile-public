@@ -148,7 +148,8 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
         </Link>
       )}
 
-      {/* Start Coding button — always visible in workspace, even during loading/error */}
+      {/* Start Coding button — visible for empty dirs, even during error states */}
+      {/* Workspace embedded: show immediately (entries starts empty) */}
       {onStartChat && entries.length === 0 && (
         <div className="text-center py-12">
           <button
@@ -158,6 +159,18 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
             <MessageSquare size={20} />
             Start Coding Here
           </button>
+        </div>
+      )}
+      {/* Browse page: show after loading so it doesn't flash for non-empty dirs */}
+      {!onStartChat && !loading && entries.length === 0 && path && !isEmbedded && (
+        <div className="text-center py-12">
+          <Link
+            href={`/project/${encodeURIComponent(path)}`}
+            className="inline-flex items-center gap-2 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors"
+          >
+            <MessageSquare size={20} />
+            Start Coding Here
+          </Link>
         </div>
       )}
 
@@ -300,18 +313,9 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
             })}
           </div>
 
-          {entries.length === 0 && !onStartChat && (
-            <div className="text-center py-20 text-muted">
+          {entries.length === 0 && (
+            <div className="text-center py-8 text-muted">
               <p>Empty directory</p>
-              {path && !isEmbedded && (
-                <Link
-                  href={`/project/${encodeURIComponent(path)}`}
-                  className="inline-flex items-center gap-2 mt-4 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 transition-colors"
-                >
-                  <MessageSquare size={20} />
-                  Start Coding Here
-                </Link>
-              )}
             </div>
           )}
         </>
