@@ -24,6 +24,8 @@ export function Terminal({ projectPath }: TerminalProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const nextId = useRef(0);
+  const runningRef = useRef(false);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const isRunning = entries.some((e) => e.running);
 
@@ -34,6 +36,21 @@ export function Terminal({ projectPath }: TerminalProps) {
   useEffect(() => {
     scrollToBottom();
   }, [entries, scrollToBottom]);
+
+  // Detect browser resume after suspend — abort dead connections
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && runningRef.current) {
+        setTimeout(() => {
+          if (runningRef.current && abortRef.current) {
+            abortRef.current.abort();
+          }
+        }, 1000);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   const killProcess = useCallback(() => {
     abortRef.current?.abort();
@@ -64,6 +81,16 @@ export function Terminal({ projectPath }: TerminalProps) {
       ]);
       setCommandHistory((prev) => [...prev, command]);
       setHistoryIndex(-1);
+      runningRef.current = true;
+
+      // Request wake lock to prevent screen off during command
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLockRef.current = await navigator.wakeLock.request("screen");
+        }
+      } catch {
+        // Wake lock not supported or denied — non-critical
+      }
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -143,7 +170,7 @@ export function Terminal({ projectPath }: TerminalProps) {
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          markDone(id, "\n[killed]", 130);
+          markDone(id, "\n[connection lost]", 130);
         } else {
           const msg = err instanceof Error ? err.message : "Connection error";
           markDone(id, msg, 1);
@@ -151,6 +178,9 @@ export function Terminal({ projectPath }: TerminalProps) {
       }
 
       abortRef.current = null;
+      runningRef.current = false;
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
     },
     [projectPath, markDone]
   );

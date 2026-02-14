@@ -51,6 +51,9 @@ export function ChatInterface({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const queryIdRef = useRef<string | null>(null);
+  const streamingRef = useRef(false);
+  const assistantIdRef = useRef<string | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -59,6 +62,35 @@ export function ChatInterface({
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // Detect browser resume after suspend (screen off, tab switch)
+  // If we were streaming when suspended, the connection is likely dead
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && streamingRef.current) {
+        // Page just became visible while we think we're streaming.
+        // Give a brief moment for buffered data to flush, then force-abort
+        // the connection. The abort triggers the catch block in sendMessage
+        // which appends "[Stopped]" and cleans up.
+        setTimeout(() => {
+          if (streamingRef.current && abortRef.current) {
+            abortRef.current.abort();
+            // Also tell server to abort
+            const qId = queryIdRef.current;
+            if (qId) {
+              fetch("/api/chat/abort", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ queryId: qId }),
+              }).catch(() => {});
+            }
+          }
+        }, 1000);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   const sendMessage = async () => {
     const trimmed = input.trim();
@@ -90,9 +122,20 @@ export function ChatInterface({
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsStreaming(true);
+    streamingRef.current = true;
+
+    // Request wake lock to prevent screen from turning off during response
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch {
+      // Wake lock not supported or denied — non-critical
+    }
 
     // Create placeholder assistant message
     const assistantId = crypto.randomUUID();
+    assistantIdRef.current = assistantId;
     const assistantMessage: MessageBlock = {
       id: assistantId,
       role: "assistant",
@@ -284,11 +327,11 @@ export function ChatInterface({
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        // User hit Stop — append stopped indicator
+        // Append stopped indicator — covers both user Stop and visibility-triggered abort
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, content: m.content + "\n\n*[Stopped]*" }
+              ? { ...m, content: m.content + "\n\n*[Connection lost — response may be incomplete]*" }
               : m
           )
         );
@@ -306,9 +349,14 @@ export function ChatInterface({
       }
     } finally {
       setIsStreaming(false);
+      streamingRef.current = false;
       abortRef.current = null;
       queryIdRef.current = null;
+      assistantIdRef.current = null;
       setPermissionQueue([]);
+      // Release wake lock
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
     }
   };
 
