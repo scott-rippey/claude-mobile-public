@@ -80,6 +80,10 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
   };
 
   useEffect(() => {
+    // Reset state when path changes so stale data from previous folder doesn't linger
+    setLoading(true);
+    setEntries([]);
+    setError(null);
     let cancelled = false;
     fetchEntries(cancelled);
     return () => { cancelled = true; };
@@ -113,7 +117,8 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
       setMkdirError(null);
       // Navigate into the new folder so user sees "Create Workspace" immediately
       const newPath = path ? `${path}/${name}` : name;
-      router.push(`/browse/${newPath}`);
+      const encodedPath = newPath.split("/").map(s => encodeURIComponent(s)).join("/");
+      router.push(`/browse/${encodedPath}`);
     } catch {
       setMkdirError("Failed to connect to server");
     } finally {
@@ -136,8 +141,8 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
 
   return (
     <div>
-      {/* Workspace link — always visible on standalone browse pages, even during loading/error */}
-      {!isEmbedded && path && (
+      {/* Workspace link — always visible on standalone browse pages when there ARE entries */}
+      {!isEmbedded && path && entries.length > 0 && (
         <Link
           href={`/project/${encodeURIComponent(path)}`}
           className="flex items-center gap-3 px-4 py-3 mb-2 bg-accent/10 border border-accent/30 rounded-lg text-accent hover:bg-accent/20 transition-colors"
@@ -148,25 +153,29 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
         </Link>
       )}
 
-      {/* Start Coding button — visible for empty dirs, even during error states */}
-      {/* Workspace embedded: show immediately (entries starts empty) */}
+      {/* Empty folder state — prominent CTA for both embedded workspace and browse pages */}
+      {/* Workspace embedded: show immediately (entries starts empty before API returns) */}
       {onStartChat && entries.length === 0 && (
-        <div className="text-center py-12">
+        <div className="flex flex-col items-center justify-center py-16 px-4 gap-4">
+          <Folder size={48} className="text-muted/40" />
+          <p className="text-muted text-sm">This folder is empty</p>
           <button
             onClick={onStartChat}
-            className="inline-flex items-center gap-2 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors text-base"
           >
             <MessageSquare size={20} />
             Start Coding Here
           </button>
         </div>
       )}
-      {/* Browse page: show after loading so it doesn't flash for non-empty dirs */}
+      {/* Browse page: show once loading finishes and folder is empty */}
       {!onStartChat && !loading && entries.length === 0 && path && !isEmbedded && (
-        <div className="text-center py-12">
+        <div className="flex flex-col items-center justify-center py-16 px-4 gap-4">
+          <Folder size={48} className="text-muted/40" />
+          <p className="text-muted text-sm">This folder is empty</p>
           <Link
             href={`/project/${encodeURIComponent(path)}`}
-            className="inline-flex items-center gap-2 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors text-base"
           >
             <MessageSquare size={20} />
             Start Coding Here
@@ -179,8 +188,17 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
           <Loader2 className="animate-spin text-muted" size={24} />
         </div>
       ) : error ? (
-        <div className="flex items-center justify-center py-20 text-red-400">
-          {error}
+        <div className="flex flex-col items-center justify-center py-12 gap-4">
+          <p className="text-red-400">{error}</p>
+          {!isEmbedded && path && (
+            <Link
+              href={`/project/${encodeURIComponent(path)}`}
+              className="inline-flex items-center gap-2 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors"
+            >
+              <MessageSquare size={20} />
+              Open Workspace Anyway
+            </Link>
+          )}
         </div>
       ) : (
         <>
@@ -313,7 +331,8 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
             })}
           </div>
 
-          {entries.length === 0 && (
+          {/* Empty text only needed for embedded views without onStartChat (unlikely but safe) */}
+          {entries.length === 0 && !onStartChat && isEmbedded && (
             <div className="text-center py-8 text-muted">
               <p>Empty directory</p>
             </div>
