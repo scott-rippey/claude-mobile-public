@@ -147,13 +147,13 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
 
   return (
     <div>
-      {isProject && !isEmbedded && (
+      {!isEmbedded && (
         <Link
           href={`/project/${encodeURIComponent(path)}`}
           className="flex items-center gap-3 px-4 py-3 mb-2 bg-accent/10 border border-accent/30 rounded-lg text-accent hover:bg-accent/20 transition-colors"
         >
           <MessageSquare size={20} />
-          <span className="font-medium">Open Project Workspace</span>
+          <span className="font-medium">{isProject ? "Open Project Workspace" : "Create Workspace"}</span>
           <ChevronRight size={16} className="ml-auto" />
         </Link>
       )}
