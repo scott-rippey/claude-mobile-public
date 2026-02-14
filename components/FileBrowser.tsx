@@ -250,27 +250,38 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
                   : `/browse/${entryPath}?view=true`;
 
               return (
-                <Link
-                  key={entry.name}
-                  href={href}
-                  className="flex items-center gap-3 px-4 py-3.5 hover:bg-card active:bg-card/80 transition-colors"
-                >
-                  <Icon
-                    size={20}
-                    className={
-                      entry.type === "directory" ? "text-accent" : "text-muted"
-                    }
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate font-medium">{entry.name}</div>
-                    {entry.type === "file" && (
-                      <div className="text-xs text-muted">
-                        {formatSize(entry.size)}
-                      </div>
-                    )}
-                  </div>
-                  <ChevronRight size={16} className="text-muted shrink-0" />
-                </Link>
+                <div key={entry.name} className="flex items-center">
+                  <Link
+                    href={href}
+                    className="flex items-center gap-3 px-4 py-3.5 hover:bg-card active:bg-card/80 transition-colors flex-1 min-w-0"
+                  >
+                    <Icon
+                      size={20}
+                      className={
+                        entry.type === "directory" ? "text-accent" : "text-muted"
+                      }
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-medium">{entry.name}</div>
+                      {entry.type === "file" && (
+                        <div className="text-xs text-muted">
+                          {formatSize(entry.size)}
+                        </div>
+                      )}
+                    </div>
+                    <ChevronRight size={16} className="text-muted shrink-0" />
+                  </Link>
+                  {entry.type === "directory" && (
+                    <Link
+                      href={`/project/${encodeURIComponent(entryPath)}`}
+                      className="shrink-0 p-3 mr-1 text-muted hover:text-accent hover:bg-accent/10 rounded-lg transition-colors"
+                      title="Open workspace"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <MessageSquare size={18} />
+                    </Link>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -278,8 +289,16 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
           {entries.length === 0 && (
             <div className="text-center py-20 text-muted">
               <p>Empty directory</p>
-              {isEmbedded && (
+              {isEmbedded ? (
                 <p className="mt-2 text-sm">Use the <span className="text-accent font-medium">Chat</span> tab below to start coding</p>
+              ) : path && (
+                <Link
+                  href={`/project/${encodeURIComponent(path)}`}
+                  className="inline-flex items-center gap-2 mt-4 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 transition-colors"
+                >
+                  <MessageSquare size={20} />
+                  Start Coding Here
+                </Link>
               )}
             </div>
           )}
