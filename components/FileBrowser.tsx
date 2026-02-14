@@ -26,6 +26,7 @@ interface FileBrowserProps {
   path: string;
   onFileSelect?: (filePath: string) => void;
   onNavigate?: (dirPath: string) => void;
+  onStartChat?: () => void;
 }
 
 const CODE_EXTENSIONS = new Set([
@@ -45,7 +46,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps) {
+export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: FileBrowserProps) {
   const router = useRouter();
   const isEmbedded = !!(onFileSelect || onNavigate);
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -289,9 +290,15 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
           {entries.length === 0 && (
             <div className="text-center py-20 text-muted">
               <p>Empty directory</p>
-              {isEmbedded ? (
-                <p className="mt-2 text-sm">Use the <span className="text-accent font-medium">Chat</span> tab below to start coding</p>
-              ) : path && (
+              {onStartChat ? (
+                <button
+                  onClick={onStartChat}
+                  className="inline-flex items-center gap-2 mt-4 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors"
+                >
+                  <MessageSquare size={20} />
+                  Start Coding Here
+                </button>
+              ) : path && !isEmbedded ? (
                 <Link
                   href={`/project/${encodeURIComponent(path)}`}
                   className="inline-flex items-center gap-2 mt-4 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 transition-colors"
@@ -299,7 +306,7 @@ export function FileBrowser({ path, onFileSelect, onNavigate }: FileBrowserProps
                   <MessageSquare size={20} />
                   Start Coding Here
                 </Link>
-              )}
+              ) : null}
             </div>
           )}
         </>

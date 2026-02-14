@@ -104,6 +104,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
             path={browsePath}
             onFileSelect={handleFileSelect}
             onNavigate={handleNavigate}
+            onStartChat={() => setActiveTab("chat")}
           />
         </div>
 
