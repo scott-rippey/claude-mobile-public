@@ -148,6 +148,19 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
         </Link>
       )}
 
+      {/* Start Coding button — always visible in workspace, even during loading/error */}
+      {onStartChat && entries.length === 0 && (
+        <div className="text-center py-12">
+          <button
+            onClick={onStartChat}
+            className="inline-flex items-center gap-2 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors"
+          >
+            <MessageSquare size={20} />
+            Start Coding Here
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="animate-spin text-muted" size={24} />
@@ -287,18 +300,10 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
             })}
           </div>
 
-          {entries.length === 0 && (
+          {entries.length === 0 && !onStartChat && (
             <div className="text-center py-20 text-muted">
               <p>Empty directory</p>
-              {onStartChat ? (
-                <button
-                  onClick={onStartChat}
-                  className="inline-flex items-center gap-2 mt-4 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 active:bg-accent/80 transition-colors"
-                >
-                  <MessageSquare size={20} />
-                  Start Coding Here
-                </button>
-              ) : path && !isEmbedded ? (
+              {path && !isEmbedded && (
                 <Link
                   href={`/project/${encodeURIComponent(path)}`}
                   className="inline-flex items-center gap-2 mt-4 px-5 py-3 bg-accent text-background font-semibold rounded-lg hover:bg-accent/90 transition-colors"
@@ -306,7 +311,7 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
                   <MessageSquare size={20} />
                   Start Coding Here
                 </Link>
-              ) : null}
+              )}
             </div>
           )}
         </>
