@@ -6,6 +6,7 @@ import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { PermissionModal } from "./PermissionModal";
 import { ActivityIndicator, type ActivityState } from "./ActivityIndicator";
+import { ModeSelector, type ChatMode } from "./ModeSelector";
 import { parseSSEStream } from "@/lib/stream-parser";
 
 interface MessageBlock {
@@ -103,6 +104,7 @@ export function ChatInterface({
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const [activityState, setActivityState] = useState<ActivityState>(null);
   const streamedTextRef = useRef(false);
+  const [chatMode, setChatMode] = useState<ChatMode>("default");
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -527,6 +529,7 @@ export function ChatInterface({
     setSessionId(null);
     setSessionStats(null);
     setPermissionQueue([]);
+    setChatMode("default");
     localStorage.removeItem(`cc-session-${projectPath}`);
     localStorage.removeItem(`${CHAT_STORAGE_PREFIX}${projectPath}`);
   };
@@ -568,6 +571,15 @@ export function ChatInterface({
       body: JSON.stringify({ requestId, behavior: "deny" }),
     }).catch(() => {});
     setPermissionQueue((prev) => prev.filter((p) => p.requestId !== requestId));
+  };
+
+  const handleModeChange = (mode: ChatMode) => {
+    setChatMode(mode);
+    fetch("/api/chat/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, mode }),
+    }).catch(() => {});
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -683,6 +695,9 @@ export function ChatInterface({
             </div>
           </div>
         )}
+        <div className="flex items-center justify-between px-4 pt-2 pb-0">
+          <ModeSelector mode={chatMode} onChange={handleModeChange} disabled={isStreaming} />
+        </div>
         <div className="flex items-end gap-2 px-4 py-3">
           <textarea
             ref={inputRef}

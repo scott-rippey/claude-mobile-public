@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { PermissionResult, Query } from "@anthropic-ai/claude-agent-sdk";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs/promises";
@@ -10,8 +10,9 @@ import type { ChatRequest } from "../types.js";
 const router = Router();
 const DEFAULT_MODEL = "claude-opus-4-6";
 
-// ── Active query tracking (for abort support) ───────────────────────
+// ── Active query tracking (for abort + mode changes) ────────────────
 const activeAborts = new Map<string, AbortController>();
+const activeQueries = new Map<string, Query>(); // sessionId → active query (for setPermissionMode)
 
 // ── Pending permission requests ─────────────────────────────────────
 interface PendingPermission {
@@ -25,6 +26,7 @@ const pendingPermissions = new Map<string, PendingPermission>();
 // ── Session state (in-memory, lost on server restart) ──────────────
 interface SessionState {
   model: string;
+  permissionMode: "default" | "acceptEdits" | "plan";
   totalCostUsd: number;
   messageCount: number;
   contextTokens: number;   // Last input_tokens (current context size)
@@ -46,7 +48,7 @@ const sessions = new Map<string, SessionState>();
 
 function getSession(sessionId: string | undefined): SessionState {
   if (sessionId && sessions.has(sessionId)) return sessions.get(sessionId)!;
-  return { model: DEFAULT_MODEL, totalCostUsd: 0, messageCount: 0, contextTokens: 0, contextWindow: 0, lastActivity: Date.now() };
+  return { model: DEFAULT_MODEL, permissionMode: "default", totalCostUsd: 0, messageCount: 0, contextTokens: 0, contextWindow: 0, lastActivity: Date.now() };
 }
 
 function saveSession(sessionId: string, state: SessionState) {
@@ -394,6 +396,7 @@ router.post("/", async (req, res) => {
   const queryId = crypto.randomUUID();
   const abortController = new AbortController();
   activeAborts.set(queryId, abortController);
+  let resultSessionId = sessionId;
 
   // ── SSE heartbeat — keep connection alive through proxies ────────
   const heartbeat = setInterval(() => {
@@ -404,6 +407,7 @@ router.post("/", async (req, res) => {
   const cleanupQuery = () => {
     clearInterval(heartbeat);
     activeAborts.delete(queryId);
+    if (resultSessionId) activeQueries.delete(resultSessionId);
     // Deny all pending permissions for this query
     for (const [reqId, pending] of pendingPermissions) {
       if (reqId.startsWith(queryId)) {
@@ -424,7 +428,7 @@ router.post("/", async (req, res) => {
 
   try {
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
-    console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"} model=${session.model}`);
+    console.error(`[chat] cwd=${cwd} sessionId=${sessionId || "new"} model=${session.model} mode=${session.permissionMode}`);
 
     sendEvent("query_start", { queryId });
 
@@ -444,7 +448,7 @@ router.post("/", async (req, res) => {
             args: ["-y", "@upstash/context7-mcp"],
           },
         },
-        permissionMode: "default",
+        permissionMode: session.permissionMode,
         model: session.model,
         includePartialMessages: true,
         abortController,
@@ -503,7 +507,6 @@ router.post("/", async (req, res) => {
     });
 
     let eventCount = 0;
-    let resultSessionId = sessionId;
 
     // Fetch SDK metadata after init (non-blocking)
     const fetchSdkMetadata = async () => {
@@ -537,6 +540,7 @@ router.post("/", async (req, res) => {
         case "system": {
           if (m.subtype === "init") {
             resultSessionId = m.session_id;
+            activeQueries.set(m.session_id, response);
 
             // Track init data in session state
             session.lastInit = {
@@ -783,11 +787,48 @@ router.post("/permission", (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /api/chat/mode — change permission mode mid-session ─────────
+const MODE_MAP: Record<string, "default" | "acceptEdits" | "plan"> = {
+  default: "default",
+  auto: "acceptEdits",
+  plan: "plan",
+};
+
+router.post("/mode", async (req, res) => {
+  const { sessionId, mode } = req.body as { sessionId?: string; mode?: string };
+
+  if (!mode || !MODE_MAP[mode]) {
+    res.status(400).json({ error: "mode must be one of: default, auto, plan" });
+    return;
+  }
+
+  const sdkMode = MODE_MAP[mode];
+  const session = getSession(sessionId);
+  session.permissionMode = sdkMode;
+  if (sessionId) saveSession(sessionId, session);
+
+  // If there's an active query, change mode immediately
+  if (sessionId && activeQueries.has(sessionId)) {
+    try {
+      await activeQueries.get(sessionId)!.setPermissionMode(sdkMode);
+      console.error(`[chat] mode changed to ${sdkMode} (live, sessionId=${sessionId})`);
+    } catch (err) {
+      console.error(`[chat] setPermissionMode failed: ${err}`);
+      // Still save the session mode — it'll apply on next query
+    }
+  } else {
+    console.error(`[chat] mode changed to ${sdkMode} (next query, sessionId=${sessionId || "none"})`);
+  }
+
+  res.json({ ok: true, mode: sdkMode });
+});
+
 // ── Stats for observability ──────────────────────────────────────────
 export function getChatStats() {
   return {
     sessions: sessions.size,
     activeAborts: activeAborts.size,
+    activeQueries: activeQueries.size,
     pendingPermissions: pendingPermissions.size,
   };
 }
