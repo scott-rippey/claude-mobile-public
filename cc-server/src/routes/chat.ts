@@ -581,15 +581,6 @@ router.post("/", async (req, res) => {
         }
 
         case "assistant": {
-          // Track per-turn usage (last assistant message = current context size)
-          const assistantUsage = (msg.message as any).usage;
-          if (assistantUsage) {
-            session.contextTokens =
-              (assistantUsage.input_tokens || 0) +
-              (assistantUsage.cache_creation_input_tokens || 0) +
-              (assistantUsage.cache_read_input_tokens || 0);
-          }
-
           for (const block of msg.message.content) {
             if (block.type === "text") {
               sendEvent("assistant", { text: block.text });
@@ -677,7 +668,21 @@ router.post("/", async (req, res) => {
           if (!event) break;
           const eventType = event.type as string;
 
-          if (eventType === "content_block_start") {
+          if (eventType === "message_start") {
+            // message_start has per-turn usage — the most reliable context size signal
+            const usage = event.message?.usage;
+            if (usage) {
+              session.contextTokens =
+                (usage.input_tokens || 0) +
+                (usage.cache_creation_input_tokens || 0) +
+                (usage.cache_read_input_tokens || 0);
+              console.error(`[chat] context: ${session.contextTokens} tokens (input=${usage.input_tokens} cache_read=${usage.cache_read_input_tokens || 0} cache_create=${usage.cache_creation_input_tokens || 0})`);
+              sendEvent("context_update", {
+                contextTokens: session.contextTokens,
+                contextWindow: session.contextWindow,
+              });
+            }
+          } else if (eventType === "content_block_start") {
             const block = event.content_block;
             sendEvent("stream_event", {
               eventType,
@@ -701,7 +706,7 @@ router.post("/", async (req, res) => {
               index: event.index,
             });
           }
-          // Skip message_start, message_delta, message_stop — not useful for UI
+          // Skip message_delta, message_stop — not useful for UI
           break;
         }
 

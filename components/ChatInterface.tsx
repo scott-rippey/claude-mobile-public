@@ -385,6 +385,17 @@ export function ChatInterface({
             // content_block_stop — no action needed
             break;
           }
+          case "context_update": {
+            const ctxTokens = event.data.contextTokens as number | undefined;
+            const ctxWindow = event.data.contextWindow as number | undefined;
+            if (ctxTokens !== undefined && ctxWindow !== undefined && ctxWindow > 0) {
+              setSessionStats({ contextTokens: ctxTokens, contextWindow: ctxWindow });
+            } else if (ctxTokens !== undefined) {
+              // Update tokens even if we don't have contextWindow yet
+              setSessionStats((prev) => prev ? { ...prev, contextTokens: ctxTokens } : prev);
+            }
+            break;
+          }
           case "compact_boundary": {
             const preTokens = event.data.preTokens as number | undefined;
             const postTokens = event.data.postTokens as number | undefined;
