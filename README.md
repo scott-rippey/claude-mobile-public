@@ -1,5 +1,7 @@
 # Claude Code Mobile
 
+**v1.0.0**
+
 Access Claude Code from your phone. Full Claude Agent SDK with file browsing, chat, terminal, and real-time streaming — all through a mobile-friendly web interface.
 
 ## Features
@@ -56,27 +58,32 @@ cd cc-server && npm install && cd ..
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 2. Create a new project (or select existing)
-3. Navigate to **APIs & Services → OAuth consent screen**
+3. Navigate to **Google Auth Platform → Branding**
+   - If you see "Google Auth platform not configured yet", click **Get Started**
+   - Enter app name and your support email
    - Choose "External" user type
-   - Fill in app name and your email
-   - Add your email to test users (while in testing mode)
-4. Navigate to **APIs & Services → Credentials**
-   - Click **Create Credentials → OAuth client ID**
+   - Add contact email and accept the User Data Policy
+   - Click **Create**
+4. Go to **Google Auth Platform → Audience**
+   - Under **Test users**, click **Add users** and add your email
+5. Go to **Google Auth Platform → Clients**
+   - Click **Create Client**
    - Application type: **Web application**
    - Authorized redirect URIs: `https://your-app.vercel.app/api/auth/callback/google`
-5. Copy the **Client ID** and **Client Secret** — you'll need these for Vercel env vars
+6. Copy the **Client ID** and **Client Secret** immediately — the secret is only shown at creation time
 
 ### 3. Cloudflare Tunnel Setup
 
-1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com)
-2. Go to **Zero Trust → Networks → Tunnels**
-3. Click **Create a tunnel** → choose **Cloudflared**
-4. Name it (e.g. "claude-mobile")
+1. Log in to [Cloudflare One](https://one.dash.cloudflare.com) (Zero Trust dashboard)
+2. Go to **Networks → Connectors → Cloudflare Tunnels**
+3. Click **Create a tunnel** → choose **Cloudflared** as the connector type
+4. Name it (e.g. "claude-mobile") and save
 5. Copy the **tunnel token** — you'll need this for your server machine
-6. Add a **Public Hostname**:
+6. In the **Published applications** tab, add a public hostname:
    - Subdomain: `api` (or your choice)
    - Domain: your domain
-   - Service: `http://localhost:3020`
+   - Service type: `HTTP`
+   - URL: `localhost:3020`
 7. Save
 
 ### 4. Server Machine Setup
