@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Folder, TerminalSquare, FileText, MessageSquare, ChevronLeft, Home, HelpCircle } from "lucide-react";
 import { LogoutButton } from "./LogoutButton";
@@ -25,8 +25,18 @@ interface ProjectWorkspaceProps {
 
 export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
   const [activeTab, setActiveTab] = useState<Tab>("browse");
-  const [browsePath, setBrowsePath] = useState(projectPath);
+  const [browsePath, setBrowsePath] = useState(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem(`cc-browse-${projectPath}`) || projectPath;
+    }
+    return projectPath;
+  });
   const [viewingFile, setViewingFile] = useState<string | null>(null);
+
+  // Persist browse path to sessionStorage
+  useEffect(() => {
+    sessionStorage.setItem(`cc-browse-${projectPath}`, browsePath);
+  }, [projectPath, browsePath]);
 
   const handleFileSelect = (filePath: string) => {
     setViewingFile(filePath);

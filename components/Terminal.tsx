@@ -19,7 +19,17 @@ export function Terminal({ projectPath }: TerminalProps) {
   const [entries, setEntries] = useState<TerminalEntry[]>([]);
   const [input, setInput] = useState("");
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [commandHistory, setCommandHistory] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem(`cc-terminal-history-${projectPath}`);
+        return saved ? JSON.parse(saved) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -29,6 +39,16 @@ export function Terminal({ projectPath }: TerminalProps) {
 
   const isRunning = entries.some((e) => e.running);
 
+  // Persist command history to localStorage (cap at 100 entries)
+  useEffect(() => {
+    try {
+      const capped = commandHistory.slice(-100);
+      localStorage.setItem(`cc-terminal-history-${projectPath}`, JSON.stringify(capped));
+    } catch {
+      // QuotaExceeded — non-critical
+    }
+  }, [commandHistory, projectPath]);
+
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
@@ -37,15 +57,23 @@ export function Terminal({ projectPath }: TerminalProps) {
     scrollToBottom();
   }, [entries, scrollToBottom]);
 
-  // Detect browser resume after suspend — abort dead connections
+  // Detect browser resume after suspend — check if connection is still alive
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible" && runningRef.current) {
-        setTimeout(() => {
+        // Wait 3s for buffered data to flush; if still running, connection is dead
+        const checkTimeout = setTimeout(() => {
           if (runningRef.current && abortRef.current) {
             abortRef.current.abort();
           }
-        }, 1000);
+        }, 3000);
+        // If command finishes naturally, cancel the abort
+        const checkInterval = setInterval(() => {
+          if (!runningRef.current) {
+            clearTimeout(checkTimeout);
+            clearInterval(checkInterval);
+          }
+        }, 500);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -157,7 +185,7 @@ export function Terminal({ projectPath }: TerminalProps) {
                 );
               } else if (event.type === "error") {
                 gotExit = true;
-                markDone(id, event.data.message, 1);
+                markDone(id, event.data.error || event.data.message, 1);
               }
             } catch {
               // skip malformed SSE lines

@@ -1,6 +1,9 @@
 import { NextRequest } from "next/server";
 import { serverFetch } from "@/lib/server-api";
 
+// Terminal commands can run for minutes (builds, tests)
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   let body: unknown;
   try {
@@ -14,11 +17,12 @@ export async function POST(request: NextRequest) {
 
   try {
     console.error("[terminal proxy] Forwarding to cc-server:", JSON.stringify(body));
+    // SSE streams run for minutes — no timeout (same as chat route)
     const res = await serverFetch("/api/terminal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
+    }, 0);
 
     console.error("[terminal proxy] cc-server response:", res.status, res.headers.get("content-type"));
 

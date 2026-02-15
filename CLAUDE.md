@@ -25,7 +25,9 @@ Phone → Vercel (Next.js + Google Auth)
 - **Claude Agent SDK** integration for chat with `permissionMode: "default"` and `settingSources: ["project", "user"]`
 - **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
 - **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
-- **In-memory session state** tracks model, context tokens, context window, and cost per sessionId (lost on restart)
+- **In-memory session state** tracks model, context tokens, context window, and cost per sessionId (lost on restart, 24h TTL with auto-cleanup)
+- **SSE heartbeats** — both chat and terminal streams send keepalive pings every 15s to prevent proxy/tunnel timeouts
+- **Permission timeout** — 60s with 45s warning event (mobile users respond quickly or not at all)
 - **Command priority:** built-in → custom .md → pass-through to SDK (covers `/compact` and skills like `/commit`)
 - Runs TypeScript directly via `tsx` — no build/compile step needed
 - `Start CC Server.command` starts both Cloudflare tunnel and server with auto-restart

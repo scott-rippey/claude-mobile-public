@@ -49,6 +49,11 @@ router.post("/", (req, res) => {
     res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
   };
 
+  // SSE heartbeat — keep connection alive through proxies
+  const heartbeat = setInterval(() => {
+    res.write(`event: keepalive\ndata: {}\n\n`);
+  }, 15_000);
+
   const child = spawn("bash", ["-c", command], {
     cwd,
     env: { ...process.env, TERM: "dumb" },
@@ -67,19 +72,22 @@ router.post("/", (req, res) => {
   });
 
   child.on("close", (code) => {
+    clearInterval(heartbeat);
     console.error("[terminal] Process exited with code:", code);
     sendEvent("exit", { code });
     res.end();
   });
 
   child.on("error", (err) => {
+    clearInterval(heartbeat);
     console.error("[terminal] Process error:", err.message);
-    sendEvent("error", { message: err.message });
+    sendEvent("error", { error: err.message });
     res.end();
   });
 
   // Kill child process if client disconnects
   res.on("close", () => {
+    clearInterval(heartbeat);
     console.error("[terminal] Client disconnected");
     if (!child.killed) {
       child.kill("SIGTERM");

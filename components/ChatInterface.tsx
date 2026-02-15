@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, Loader2, Square } from "lucide-react";
+import { Send, Plus, Loader2, Square, WifiOff } from "lucide-react";
 import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { PermissionModal } from "./PermissionModal";
@@ -114,18 +114,22 @@ export function ChatInterface({
     savePersistedChat(projectPath, messages, sessionStats);
   }, [projectPath, messages, sessionStats]);
 
+  // Track the last user message for retry functionality
+  const lastUserMessageRef = useRef<string | null>(null);
+  const [connectionLost, setConnectionLost] = useState(false);
+
   // Detect browser resume after suspend (screen off, tab switch)
-  // If we were streaming when suspended, the connection is likely dead
+  // Try to detect if stream is still alive before force-aborting
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible" && streamingRef.current) {
         // Page just became visible while we think we're streaming.
-        // Give a brief moment for buffered data to flush, then force-abort
-        // the connection. The abort triggers the catch block in sendMessage
-        // which appends "[Stopped]" and cleans up.
-        setTimeout(() => {
+        // Wait a moment for buffered data, then check if connection survives.
+        // If no data arrives within 3s, assume the connection is dead.
+        const checkTimeout = setTimeout(() => {
           if (streamingRef.current && abortRef.current) {
             abortRef.current.abort();
+            setConnectionLost(true);
             // Also tell server to abort
             const qId = queryIdRef.current;
             if (qId) {
@@ -136,15 +140,48 @@ export function ChatInterface({
               }).catch(() => {});
             }
           }
-        }, 1000);
+        }, 3000);
+
+        // If streaming finishes naturally within 3s, cancel the abort
+        const checkInterval = setInterval(() => {
+          if (!streamingRef.current) {
+            clearTimeout(checkTimeout);
+            clearInterval(checkInterval);
+          }
+        }, 500);
+
+        return () => {
+          clearTimeout(checkTimeout);
+          clearInterval(checkInterval);
+        };
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
-  const sendMessage = async () => {
-    const trimmed = input.trim();
+  // 2A: Network loss detection
+  const [isOffline, setIsOffline] = useState(false);
+  useEffect(() => {
+    const handleOffline = () => {
+      setIsOffline(true);
+      // If streaming when we go offline, mark connection lost
+      if (streamingRef.current && abortRef.current) {
+        abortRef.current.abort();
+        setConnectionLost(true);
+      }
+    };
+    const handleOnline = () => setIsOffline(false);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
+
+  const sendMessage = async (overrideText?: string) => {
+    const trimmed = overrideText || input.trim();
     if (!trimmed || isStreaming) return;
 
     // /clear — clear UI instantly + notify server to clean up session state
@@ -174,6 +211,8 @@ export function ChatInterface({
     setInput("");
     setIsStreaming(true);
     streamingRef.current = true;
+    lastUserMessageRef.current = trimmed;
+    setConnectionLost(false);
 
     // Request wake lock to prevent screen from turning off during response
     try {
@@ -300,8 +339,21 @@ export function ChatInterface({
             );
             break;
           }
+          case "compact_boundary": {
+            const preTokens = event.data.preTokens as number | undefined;
+            const postTokens = event.data.postTokens as number | undefined;
+            const freed = preTokens && postTokens ? ((preTokens - postTokens) / 1000).toFixed(1) : "?";
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, content: m.content + `\n\n*[Context compacted — ${freed}k tokens freed]*\n\n` }
+                  : m
+              )
+            );
+            break;
+          }
           case "system": {
-            // SDK system events (compact_boundary, context info, etc.)
+            // SDK system events (context info, etc.)
             const subtype = event.data.subtype as string;
             const sysContent = event.data.result as string | undefined;
             if (sysContent) {
@@ -434,6 +486,13 @@ export function ChatInterface({
     }
   };
 
+  const retryLastMessage = () => {
+    const lastMsg = lastUserMessageRef.current;
+    if (!lastMsg || isStreaming) return;
+    setConnectionLost(false);
+    sendMessage(lastMsg);
+  };
+
   const handlePermissionAllow = (requestId: string) => {
     fetch("/api/chat/permission", {
       method: "POST",
@@ -478,6 +537,14 @@ export function ChatInterface({
         </header>
       )}
 
+      {/* Offline banner */}
+      {isOffline && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 text-yellow-500 text-xs shrink-0">
+          <WifiOff size={14} />
+          Network lost — reconnect to continue
+        </div>
+      )}
+
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && (
@@ -487,7 +554,7 @@ export function ChatInterface({
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg, idx) => (
           <div key={msg.id}>
             {msg.role === "user" ? (
               <div className="flex justify-end">
@@ -519,6 +586,15 @@ export function ChatInterface({
                       Thinking...
                     </div>
                   )}
+                {/* Retry button when connection was lost */}
+                {connectionLost && !isStreaming && idx === messages.length - 1 && (
+                  <button
+                    onClick={retryLastMessage}
+                    className="mt-2 px-3 py-1.5 text-xs bg-accent/20 text-accent rounded-lg hover:bg-accent/30 transition-colors"
+                  >
+                    Retry last message
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -578,7 +654,7 @@ export function ChatInterface({
             </button>
           ) : (
             <button
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={!input.trim()}
               className="flex items-center justify-center w-10 h-10 bg-accent rounded-xl text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-accent/80 transition-colors shrink-0"
             >

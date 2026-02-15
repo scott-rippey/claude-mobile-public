@@ -29,6 +29,8 @@ interface SessionState {
   messageCount: number;
   contextTokens: number;   // Last input_tokens (current context size)
   contextWindow: number;   // Max context window for the model
+  lastActivity: number;    // timestamp for TTL cleanup
+  supportedModels?: { id: string; name?: string }[];
   lastInit?: {
     tools: string[];
     mcpServers: { name: string; status: string }[];
@@ -44,12 +46,29 @@ const sessions = new Map<string, SessionState>();
 
 function getSession(sessionId: string | undefined): SessionState {
   if (sessionId && sessions.has(sessionId)) return sessions.get(sessionId)!;
-  return { model: DEFAULT_MODEL, totalCostUsd: 0, messageCount: 0, contextTokens: 0, contextWindow: 0 };
+  return { model: DEFAULT_MODEL, totalCostUsd: 0, messageCount: 0, contextTokens: 0, contextWindow: 0, lastActivity: Date.now() };
 }
 
 function saveSession(sessionId: string, state: SessionState) {
+  state.lastActivity = Date.now();
   sessions.set(sessionId, state);
 }
+
+// ── Session cleanup — evict sessions older than 24h ─────────────────
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [id, state] of sessions) {
+    if (now - state.lastActivity > SESSION_TTL_MS) {
+      sessions.delete(id);
+      cleaned++;
+    }
+  }
+  if (cleaned > 0) {
+    console.error(`[chat] session cleanup: removed ${cleaned}, remaining ${sessions.size}`);
+  }
+}, 10 * 60 * 1000); // every 10 min
 
 // ── Expand custom .md slash commands ───────────────────────────────
 async function expandSlashCommand(
@@ -241,7 +260,17 @@ async function handleModel(ctx: CommandContext) {
     if (ctx.sessionId) saveSession(ctx.sessionId, ctx.session);
     ctx.sendEvent("assistant", { text: `Model changed to **${newModel}**. Next message will use this model.` });
   } else {
-    ctx.sendEvent("assistant", { text: `Current model: **${ctx.session.model}**\n\nUsage: \`/model <model-name>\`\n\nExamples:\n- \`/model claude-sonnet-4-5-20250929\`\n- \`/model claude-opus-4-6\`\n- \`/model claude-haiku-4-5-20251001\`` });
+    let text = `Current model: **${ctx.session.model}**\n\nUsage: \`/model <model-name>\`\n`;
+    if (ctx.session.supportedModels?.length) {
+      text += "\n**Available models:**\n";
+      for (const m of ctx.session.supportedModels) {
+        const active = m.id === ctx.session.model ? " (active)" : "";
+        text += `- \`${m.id}\`${m.name ? ` — ${m.name}` : ""}${active}\n`;
+      }
+    } else {
+      text += "\nExamples:\n- \`/model claude-sonnet-4-5-20250929\`\n- \`/model claude-opus-4-6\`\n- \`/model claude-haiku-4-5-20251001\`";
+    }
+    ctx.sendEvent("assistant", { text });
   }
 }
 
@@ -366,8 +395,14 @@ router.post("/", async (req, res) => {
   const abortController = new AbortController();
   activeAborts.set(queryId, abortController);
 
+  // ── SSE heartbeat — keep connection alive through proxies ────────
+  const heartbeat = setInterval(() => {
+    res.write(`event: keepalive\ndata: {}\n\n`);
+  }, 15_000);
+
   // Clean up abort + pending permissions for this query
   const cleanupQuery = () => {
+    clearInterval(heartbeat);
     activeAborts.delete(queryId);
     // Deny all pending permissions for this query
     for (const [reqId, pending] of pendingPermissions) {
@@ -416,19 +451,38 @@ router.post("/", async (req, res) => {
           return new Promise<PermissionResult>((resolve, reject) => {
             const requestId = `${queryId}:${crypto.randomUUID()}`;
 
-            // Auto-deny after 120s
+            // Warn at 45s that permission is expiring
+            const warning = setTimeout(() => {
+              sendEvent("permission_warning", {
+                requestId,
+                message: "Permission request expiring soon...",
+              });
+            }, 45_000);
+
+            // Auto-deny after 60s (mobile users respond quickly or not at all)
             const timeout = setTimeout(() => {
               console.error(`[chat] permission timeout for ${requestId}`);
+              clearTimeout(warning);
               pendingPermissions.delete(requestId);
               resolve({ behavior: "deny", message: "Permission request timed out" });
-            }, 120_000);
+            }, 60_000);
 
             pendingPermissions.set(requestId, { resolve, reject, timeout, input });
+
+            // 3C: Check if already aborted before registering listener
+            if (options.signal.aborted) {
+              clearTimeout(timeout);
+              clearTimeout(warning);
+              pendingPermissions.delete(requestId);
+              resolve({ behavior: "deny", message: "Query aborted", interrupt: true });
+              return;
+            }
 
             // Listen for abort to auto-deny
             options.signal.addEventListener("abort", () => {
               if (pendingPermissions.has(requestId)) {
                 clearTimeout(timeout);
+                clearTimeout(warning);
                 pendingPermissions.delete(requestId);
                 resolve({ behavior: "deny", message: "Query aborted", interrupt: true });
               }
@@ -449,6 +503,29 @@ router.post("/", async (req, res) => {
 
     let eventCount = 0;
     let resultSessionId = sessionId;
+
+    // Fetch SDK metadata after init (non-blocking)
+    const fetchSdkMetadata = async () => {
+      try {
+        const [models, mcpStatus] = await Promise.all([
+          response.supportedModels().catch(() => null),
+          response.mcpServerStatus().catch(() => null),
+        ]);
+        if (models) {
+          session.supportedModels = (models as any[]).map((m: any) => ({
+            id: m.id || m.model || String(m),
+            name: m.name || m.displayName,
+          }));
+          if (resultSessionId) saveSession(resultSessionId, session);
+          sendEvent("supported_models", { models: session.supportedModels });
+        }
+        if (mcpStatus) {
+          sendEvent("mcp_status", { servers: mcpStatus });
+        }
+      } catch {
+        // Non-critical — metadata fetch failed
+      }
+    };
 
     for await (const msg of response) {
       const m = msg as any;
@@ -484,6 +561,15 @@ router.post("/", async (req, res) => {
               agents: m.agents,
               claudeCodeVersion: m.claude_code_version,
               cwd: m.cwd,
+            });
+
+            // Fetch supported models + live MCP status (non-blocking)
+            fetchSdkMetadata();
+          } else if (m.subtype === "compact_boundary") {
+            sendEvent("compact_boundary", {
+              preTokens: m.pre_context_tokens,
+              postTokens: m.post_context_tokens,
+              summary: m.summary,
             });
           } else if (m.subtype === "status") {
             sendEvent("status", { status: m.status });
@@ -657,5 +743,14 @@ router.post("/permission", (req, res) => {
   console.error(`[chat] permission ${requestId} → ${behavior}`);
   res.json({ ok: true });
 });
+
+// ── Stats for observability ──────────────────────────────────────────
+export function getChatStats() {
+  return {
+    sessions: sessions.size,
+    activeAborts: activeAborts.size,
+    pendingPermissions: pendingPermissions.size,
+  };
+}
 
 export default router;

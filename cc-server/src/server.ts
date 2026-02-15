@@ -4,8 +4,16 @@ import cors from "cors";
 import { authMiddleware } from "./auth-middleware.js";
 import filesRouter from "./routes/files.js";
 import fileRouter from "./routes/file.js";
-import chatRouter from "./routes/chat.js";
+import chatRouter, { getChatStats } from "./routes/chat.js";
 import terminalRouter from "./routes/terminal.js";
+
+// ── Global error handlers — prevent silent crashes ──────────────────
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandled rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[server] uncaught exception:", err);
+});
 
 const app = express();
 const port = parseInt(process.env.PORT || "3020", 10);
@@ -29,3 +37,9 @@ app.listen(port, () => {
   console.error(`CC Server running on http://localhost:${port}`);
   console.error(`Base directory: ${process.env.BASE_DIR}`);
 });
+
+// ── Periodic resource logging — diagnose leaks and stuck queries ────
+setInterval(() => {
+  const stats = getChatStats();
+  console.error(`[server] resources: sessions=${stats.sessions} activeAborts=${stats.activeAborts} pendingPermissions=${stats.pendingPermissions}`);
+}, 60_000);
