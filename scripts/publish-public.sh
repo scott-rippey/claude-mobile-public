@@ -52,8 +52,8 @@ echo "Pushed to $REMOTE/main"
 git checkout "$ORIGINAL_BRANCH" --quiet
 git branch -D "$BRANCH" --quiet
 
-# Tag the release on the private repo
-git tag "public-$VERSION"
+# Tag the release on the private repo (update if exists)
+git tag -f "public-$VERSION" 2>/dev/null
 echo "Tagged: public-$VERSION"
 
 echo ""
