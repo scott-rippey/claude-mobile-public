@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, Loader2, Square, WifiOff } from "lucide-react";
+import { Send, Plus, Square, WifiOff } from "lucide-react";
 import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { PermissionModal } from "./PermissionModal";
+import { ActivityIndicator, type ActivityState } from "./ActivityIndicator";
 import { parseSSEStream } from "@/lib/stream-parser";
 
 interface MessageBlock {
@@ -100,6 +101,8 @@ export function ChatInterface({
   const streamingRef = useRef(false);
   const assistantIdRef = useRef<string | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const [activityState, setActivityState] = useState<ActivityState>(null);
+  const streamedTextRef = useRef(false);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -233,6 +236,8 @@ export function ChatInterface({
       toolCalls: [],
     };
     setMessages((prev) => [...prev, assistantMessage]);
+    setActivityState("thinking");
+    streamedTextRef.current = false;
 
     const fetchAbort = new AbortController();
     abortRef.current = fetchAbort;
@@ -280,14 +285,18 @@ export function ChatInterface({
             break;
           }
           case "assistant": {
-            const text = event.data.text as string;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? { ...m, content: m.content + text }
-                  : m
-              )
-            );
+            // When streaming via deltas, the assistant event delivers the FULL text block
+            // after streaming — skip it to avoid doubling the text
+            if (!streamedTextRef.current) {
+              const text = event.data.text as string;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, content: m.content + text }
+                    : m
+                )
+              );
+            }
             break;
           }
           case "tool_call": {
@@ -296,6 +305,7 @@ export function ChatInterface({
               input: event.data.input as Record<string, unknown>,
               id: event.data.id as string,
             };
+            setActivityState(null); // ToolCallIndicator takes over
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
@@ -320,6 +330,8 @@ export function ChatInterface({
                   : m
               )
             );
+            // Model is now analyzing results — show thinking indicator
+            setActivityState("thinking");
             break;
           }
           case "tool_progress": {
@@ -337,6 +349,40 @@ export function ChatInterface({
                   : m
               )
             );
+            break;
+          }
+          case "stream_event": {
+            const eventType = event.data.eventType as string;
+            if (eventType === "content_block_start") {
+              const blockType = event.data.blockType as string;
+              if (blockType === "text") {
+                setActivityState(null); // text about to stream
+                // Separate text segments with a paragraph break (e.g. text before vs after tool calls)
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId && m.content.length > 0
+                      ? { ...m, content: m.content + "\n\n" }
+                      : m
+                  )
+                );
+              } else if (blockType === "tool_use") {
+                setActivityState("tool-starting");
+              }
+            } else if (eventType === "content_block_delta") {
+              const text = event.data.text as string | undefined;
+              if (text) {
+                streamedTextRef.current = true;
+                setActivityState(null);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? { ...m, content: m.content + text }
+                      : m
+                  )
+                );
+              }
+            }
+            // content_block_stop — no action needed
             break;
           }
           case "compact_boundary": {
@@ -456,6 +502,8 @@ export function ChatInterface({
       abortRef.current = null;
       queryIdRef.current = null;
       assistantIdRef.current = null;
+      setActivityState(null);
+      streamedTextRef.current = false;
       setPermissionQueue([]);
       // Release wake lock
       wakeLockRef.current?.release().catch(() => {});
@@ -576,15 +624,11 @@ export function ChatInterface({
                 ))}
                 {/* Text content */}
                 {msg.content && <StreamingMessage content={msg.content} />}
-                {/* Streaming indicator — hide once tool calls or content appear */}
+                {/* Activity indicator — shows between tool calls and during thinking */}
                 {isStreaming &&
                   msg === messages[messages.length - 1] &&
-                  !msg.content &&
-                  (!msg.toolCalls || msg.toolCalls.length === 0) && (
-                    <div className="flex items-center gap-2 text-muted text-sm py-2">
-                      <Loader2 className="animate-spin" size={14} />
-                      Thinking...
-                    </div>
+                  activityState && (
+                    <ActivityIndicator state={activityState} />
                   )}
                 {/* Retry button when connection was lost */}
                 {connectionLost && !isStreaming && idx === messages.length - 1 && (

@@ -446,6 +446,7 @@ router.post("/", async (req, res) => {
         },
         permissionMode: "default",
         model: session.model,
+        includePartialMessages: true,
         abortController,
         canUseTool: (toolName, input, options) => {
           return new Promise<PermissionResult>((resolve, reject) => {
@@ -668,6 +669,39 @@ router.post("/", async (req, res) => {
           if (m.error) {
             sendEvent("error", { error: `Authentication failed: ${m.error}` });
           }
+          break;
+        }
+
+        case "stream_event": {
+          const event = m.event;
+          if (!event) break;
+          const eventType = event.type as string;
+
+          if (eventType === "content_block_start") {
+            const block = event.content_block;
+            sendEvent("stream_event", {
+              eventType,
+              blockType: block?.type,
+              index: event.index,
+              ...(block?.type === "tool_use" ? { toolName: block.name } : {}),
+            });
+          } else if (eventType === "content_block_delta") {
+            const delta = event.delta;
+            if (delta?.type === "text_delta") {
+              sendEvent("stream_event", {
+                eventType,
+                deltaType: delta.type,
+                text: delta.text,
+              });
+            }
+            // Skip input_json_delta — redundant with tool_call event
+          } else if (eventType === "content_block_stop") {
+            sendEvent("stream_event", {
+              eventType,
+              index: event.index,
+            });
+          }
+          // Skip message_start, message_delta, message_stop — not useful for UI
           break;
         }
 
