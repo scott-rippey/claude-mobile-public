@@ -26,7 +26,7 @@ Phone → Vercel (Next.js + Google Auth)
 - **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
 - **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
 - **In-memory session state** tracks model, permissionMode, context tokens, context window, and cost per sessionId (lost on restart, 24h TTL with auto-cleanup)
-- **Permission modes** — Default/Auto/Plan switchable mid-session via UI selector; Auto = `acceptEdits`, Plan = no tool execution
+- **Permission modes** — Default/Accept Edits/Plan switchable mid-session via UI selector; maps directly to SDK `permissionMode` values
 - **SSE heartbeats** — both chat and terminal streams send keepalive pings every 15s to prevent proxy/tunnel timeouts
 - **Permission timeout** — 60s with 45s warning event (mobile users respond quickly or not at all)
 - **Command priority:** built-in → custom .md → pass-through to SDK (covers `/compact` and skills like `/commit`)
@@ -75,5 +75,5 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 ### cc-server (.env on iMac)
 - `SHARED_SECRET` — must match Vercel's value
 - `ANTHROPIC_API_KEY` — Claude API key
-- `BASE_DIR` — root directory for file browsing and terminal (e.g. `/Users/scottrippey/App Development`)
+- `BASE_DIR` — root directory for file browsing and terminal (e.g. `/path/to/your/projects`)
 - `PORT` — defaults to 3020

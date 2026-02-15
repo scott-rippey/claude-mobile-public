@@ -1,40 +1,56 @@
-# iMac Setup Guide
+# Server Machine Setup
 
-Run these from Claude Code on the iMac. Open CC in the project folder:
-`~/App Development/Personal/CC Interface`
+The server machine runs cc-server (Express + Claude Agent SDK) and the Cloudflare tunnel. This can be any always-on machine — a Mac Mini, iMac, Linux server, etc.
 
-## One-time setup (do these once)
+## Prerequisites
+
+- Node.js 18+
+- An Anthropic API key
+- Cloudflare tunnel token (from your Cloudflare dashboard)
+
+## One-Time Setup
 
 ### 1. Install cloudflared
 
+**macOS:**
 ```bash
 brew install cloudflared
 ```
 
-### 2. Install the tunnel as a service (starts on boot)
-
+**Linux:**
 ```bash
-sudo cloudflared service install eyJhIjoiZWE4NjA0NWZjY2ViYjVhNGRmOTMyOWExNzllMTI0MTUiLCJ0IjoiYWNlYWY2YmYtYmZlOS00NTA3LWIyZWYtMmRjMjg5NjY5NjM5IiwicyI6Ill6bGpNR1JsTWpBdFlXUTFNUzAwTmpaakxUbGxaREF0WVRKak1UVTBZMll3T0dNeCJ9
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
 ```
 
-### 3. Verify BASE_DIR in cc-server/.env
-
-The `.env` syncs via Syncthing. If your iMac username is different, upda
-SE_DIR` to match:
+### 2. Install the tunnel as a service (auto-starts on boot)
 
 ```bash
-whoami
+sudo cloudflared service install YOUR_TUNNEL_TOKEN
 ```
 
-If that prints `scottrippey`, you're good. If it prints something else, update `cc-server/.env` — change `BASE_DIR=/Users/WHATEVER_IT_SAID/App Development`.
+Replace `YOUR_TUNNEL_TOKEN` with the token from your Cloudflare dashboard (see README for setup instructions).
 
-### 4. Install cc-server dependencies (just in case)
+### 3. Configure cc-server
+
+```bash
+cp cc-server/.env.example cc-server/.env
+```
+
+Edit `cc-server/.env` and fill in your values:
+- `SHARED_SECRET` — must match the value in your Vercel env vars
+- `ANTHROPIC_API_KEY` — your Anthropic API key
+- `BASE_DIR` — root directory for file browsing (e.g. `/Users/yourname/projects`)
+- `PORT` — defaults to 3020
+- `TUNNEL_TOKEN` — your Cloudflare tunnel token
+
+### 4. Install dependencies
 
 ```bash
 cd cc-server && npm install
 ```
 
-## Test it
+## Test It
 
 ### Start the server
 
@@ -42,22 +58,24 @@ cd cc-server && npm install
 cd cc-server && npm run dev
 ```
 
-### Check tunnel is working
+Or double-click `Start CC Server.command` (macOS) which starts both the tunnel and server with auto-restart.
 
-From your phone browser: `https://api.claudemobile.dev/health`
+### Verify the tunnel
+
+From any browser: `https://your-tunnel-domain/health`
 
 Should return: `{"status":"ok","timestamp":"..."}`
 
-### Check the full app
+### Verify the full app
 
-From your phone: `https://claudemobile-sigma.vercel.app`
+Open your Vercel app URL from your phone and sign in.
 
-## Daily use
+## Daily Use
 
-The tunnel auto-starts on boot. Just start cc-server:
+If you installed cloudflared as a service, the tunnel auto-starts on boot. Just start cc-server:
 
 Double-click **Start CC Server.command** in Finder, or from terminal:
 
 ```bash
-cd ~/App\ Development/Personal/CC\ Interface/cc-server && npm run dev
+cd /path/to/project/cc-server && npm run dev
 ```

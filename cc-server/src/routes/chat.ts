@@ -788,21 +788,17 @@ router.post("/permission", (req, res) => {
 });
 
 // ── POST /api/chat/mode — change permission mode mid-session ─────────
-const MODE_MAP: Record<string, "default" | "acceptEdits" | "plan"> = {
-  default: "default",
-  auto: "acceptEdits",
-  plan: "plan",
-};
+const VALID_MODES = new Set(["default", "acceptEdits", "plan"]);
 
 router.post("/mode", async (req, res) => {
   const { sessionId, mode } = req.body as { sessionId?: string; mode?: string };
 
-  if (!mode || !MODE_MAP[mode]) {
-    res.status(400).json({ error: "mode must be one of: default, auto, plan" });
+  if (!mode || !VALID_MODES.has(mode)) {
+    res.status(400).json({ error: "mode must be one of: default, acceptEdits, plan" });
     return;
   }
 
-  const sdkMode = MODE_MAP[mode];
+  const sdkMode = mode as "default" | "acceptEdits" | "plan";
   const session = getSession(sessionId);
   session.permissionMode = sdkMode;
   if (sessionId) saveSession(sessionId, session);

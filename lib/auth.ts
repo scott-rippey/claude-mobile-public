@@ -1,7 +1,8 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
-const ALLOWED_EMAILS = ["scott@PowerYourProcess.ai"];
+const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || "")
+  .split(",").map((e) => e.trim()).filter(Boolean);
 
 export const authOptions: NextAuthOptions = {
   providers: [

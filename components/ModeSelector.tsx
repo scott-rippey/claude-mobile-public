@@ -1,8 +1,8 @@
-export type ChatMode = "default" | "auto" | "plan";
+export type ChatMode = "default" | "acceptEdits" | "plan";
 
 const MODES: { value: ChatMode; label: string }[] = [
   { value: "default", label: "Default" },
-  { value: "auto", label: "Auto" },
+  { value: "acceptEdits", label: "Accept Edits" },
   { value: "plan", label: "Plan" },
 ];
 

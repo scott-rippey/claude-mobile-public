@@ -4,8 +4,13 @@
 
 cd "$(dirname "$0")" || exit 1
 
-# Tunnel token
-TUNNEL_TOKEN="eyJhIjoiZWE4NjA0NWZjY2ViYjVhNGRmOTMyOWExNzllMTI0MTUiLCJ0IjoiYWNlYWY2YmYtYmZlOS00NTA3LWIyZWYtMmRjMjg5NjY5NjM5IiwicyI6Ill6bGpNR1JsTWpBdFlXUTFNUzAwTmpaakxUbGxaREF0WVRKak1UVTBZMll3T0dNeCJ9"
+# Load tunnel token from cc-server/.env
+TUNNEL_TOKEN=$(grep TUNNEL_TOKEN cc-server/.env 2>/dev/null | cut -d= -f2-)
+if [ -z "$TUNNEL_TOKEN" ]; then
+  echo "ERROR: TUNNEL_TOKEN not found in cc-server/.env"
+  echo "Add TUNNEL_TOKEN=your-token to cc-server/.env"
+  exit 1
+fi
 
 cleanup() {
   echo "Shutting down..."
