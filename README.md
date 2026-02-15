@@ -33,7 +33,7 @@ Phone (browser)
 ## Prerequisites
 
 - **Node.js 18+** on both your dev machine and server
-- **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
+- **Claude Code** — installed on the server machine (uses your Claude Max/Pro subscription)
 - **Google Cloud account** — for OAuth (free)
 - **Cloudflare account** — for the tunnel (free tier works)
 - **A domain name** — for the Cloudflare tunnel endpoint
@@ -102,7 +102,6 @@ cp cc-server/.env.example cc-server/.env
 Edit `cc-server/.env`:
 ```
 SHARED_SECRET=generate-a-random-string-here
-ANTHROPIC_API_KEY=sk-ant-...
 BASE_DIR=/path/to/your/projects
 PORT=3020
 TUNNEL_TOKEN=eyJ...your-cloudflare-tunnel-token
@@ -160,7 +159,6 @@ The `Start CC Server.command` launcher starts both the Cloudflare tunnel and cc-
 | Variable | Description |
 |----------|-------------|
 | `SHARED_SECRET` | Must match the Vercel value |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
 | `BASE_DIR` | Root directory for file browsing and terminal |
 | `PORT` | Server port (default: 3020) |
 | `TUNNEL_TOKEN` | Cloudflare tunnel token |

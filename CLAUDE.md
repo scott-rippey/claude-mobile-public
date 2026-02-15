@@ -39,7 +39,7 @@ Phone → Vercel (Next.js + Google Auth)
 ### Key Files
 - `cc-server/` — excluded from root `tsconfig.json` and `eslint.config.mjs`
 - `.env.example` — variable names and examples (committed)
-- `cc-server/.env` — `SHARED_SECRET` and `ANTHROPIC_API_KEY` (not committed)
+- `cc-server/.env` — `SHARED_SECRET`, `TUNNEL_TOKEN`, etc. (not committed)
 - `Start CC Server.command` — macOS launcher for cc-server (tunnel + server)
 - `Start CC Server Local.command` — local-only launcher (server only, no tunnel)
 - `docs/IMPLEMENTATION_PLAN.md` — checklist of all phases
@@ -74,6 +74,6 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 
 ### cc-server (.env on iMac)
 - `SHARED_SECRET` — must match Vercel's value
-- `ANTHROPIC_API_KEY` — Claude API key
 - `BASE_DIR` — root directory for file browsing and terminal (e.g. `/path/to/your/projects`)
 - `PORT` — defaults to 3020
+- `TUNNEL_TOKEN` — Cloudflare tunnel token (used by `Start CC Server.command`)

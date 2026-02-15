@@ -5,7 +5,7 @@ The server machine runs cc-server (Express + Claude Agent SDK) and the Cloudflar
 ## Prerequisites
 
 - Node.js 18+
-- An Anthropic API key
+- Claude Code installed (uses your Claude Max/Pro subscription)
 - Cloudflare tunnel token (from your Cloudflare dashboard)
 
 ## One-Time Setup
@@ -39,7 +39,6 @@ cp cc-server/.env.example cc-server/.env
 
 Edit `cc-server/.env` and fill in your values:
 - `SHARED_SECRET` — must match the value in your Vercel env vars
-- `ANTHROPIC_API_KEY` — your Anthropic API key
 - `BASE_DIR` — root directory for file browsing (e.g. `/Users/yourname/projects`)
 - `PORT` — defaults to 3020
 - `TUNNEL_TOKEN` — your Cloudflare tunnel token
