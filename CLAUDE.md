@@ -21,11 +21,12 @@ Phone → Vercel (Next.js + Google Auth)
 ### Backend (`cc-server/` — runs on iMac only)
 - **Express** server on port 3020
 - **Auth middleware** validates shared secret from Vercel API routes
-- **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/chat/abort`, `/api/chat/permission`, `/api/terminal` (SSE streaming)
-- **Claude Agent SDK** integration for chat with `permissionMode: "default"` and `settingSources: ["project", "user"]`
+- **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/chat/abort`, `/api/chat/permission`, `/api/chat/mode`, `/api/terminal` (SSE streaming)
+- **Claude Agent SDK** integration for chat with `settingSources: ["project", "user"]` and `includePartialMessages: true` for token-by-token streaming
 - **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
 - **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
-- **In-memory session state** tracks model, context tokens, context window, and cost per sessionId (lost on restart, 24h TTL with auto-cleanup)
+- **In-memory session state** tracks model, permissionMode, context tokens, context window, and cost per sessionId (lost on restart, 24h TTL with auto-cleanup)
+- **Permission modes** — Default/Auto/Plan switchable mid-session via UI selector; Auto = `acceptEdits`, Plan = no tool execution
 - **SSE heartbeats** — both chat and terminal streams send keepalive pings every 15s to prevent proxy/tunnel timeouts
 - **Permission timeout** — 60s with 45s warning event (mobile users respond quickly or not at all)
 - **Command priority:** built-in → custom .md → pass-through to SDK (covers `/compact` and skills like `/commit`)
