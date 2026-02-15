@@ -34,7 +34,7 @@ if [ -f .publicignore ]; then
     # Skip comments and empty lines
     [[ "$path" =~ ^#.*$ || -z "$path" ]] && continue
     path=$(echo "$path" | xargs) # trim whitespace
-    if [ -e "$path" ]; then
+    if git ls-files --error-unmatch "$path" &>/dev/null; then
       git rm -rf "$path" --quiet
       echo "  Removed: $path"
     fi
