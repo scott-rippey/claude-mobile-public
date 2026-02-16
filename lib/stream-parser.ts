@@ -1,6 +1,7 @@
 export interface SSEMessage {
-  type: "init" | "assistant" | "tool_call" | "tool_result" | "tool_progress" | "status" | "system" | "result" | "error" | "done" | "query_start" | "permission_request" | "compact_boundary" | "permission_warning" | "supported_models" | "mcp_status" | "stream_event" | "context_update";
+  type: "init" | "assistant" | "tool_call" | "tool_result" | "tool_progress" | "status" | "system" | "result" | "error" | "done" | "query_start" | "permission_request" | "compact_boundary" | "permission_warning" | "supported_models" | "mcp_status" | "stream_event" | "context_update" | "buffer_gap" | "reconnect_complete" | "command_start";
   data: Record<string, unknown>;
+  index?: number;
 }
 
 export async function* parseSSEStream(

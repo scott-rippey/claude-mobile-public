@@ -5,9 +5,10 @@ import { Send, Plus, Square, WifiOff } from "lucide-react";
 import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { PermissionModal } from "./PermissionModal";
-import { ActivityIndicator, type ActivityState } from "./ActivityIndicator";
+import type { ActivityState } from "./ActivityIndicator";
+import { StatusBar, type ConnectionState } from "./StatusBar";
 import { ModeSelector, type ChatMode } from "./ModeSelector";
-import { parseSSEStream } from "@/lib/stream-parser";
+import { parseSSEStream, type SSEMessage } from "@/lib/stream-parser";
 
 interface MessageBlock {
   id: string;
@@ -66,6 +67,33 @@ function savePersistedChat(projectPath: string, messages: MessageBlock[], sessio
   }
 }
 
+// ── Helper: get descriptive label for a tool call ──────────────────
+function getToolActivityLabel(name: string, input: Record<string, unknown>): ActivityState {
+  if (name === "Task") {
+    const desc = input.description || input.prompt;
+    return { type: "agent-working", description: typeof desc === "string" ? desc.slice(0, 60) : "Working..." };
+  }
+  if (name === "Bash" || name === "BashTool") {
+    const cmd = input.command;
+    return { type: "tool-running", toolName: name, description: typeof cmd === "string" ? cmd.slice(0, 60) : undefined };
+  }
+  if (name === "Read" || name === "ReadFile") {
+    const fp = input.file_path;
+    const filename = typeof fp === "string" ? fp.split("/").pop() : undefined;
+    return { type: "tool-running", toolName: name, description: filename };
+  }
+  if (name === "Write" || name === "Edit" || name === "MultiEdit") {
+    const fp = input.file_path;
+    const filename = typeof fp === "string" ? fp.split("/").pop() : undefined;
+    return { type: "tool-running", toolName: name, description: filename };
+  }
+  if (name === "Glob" || name === "Grep") {
+    const pattern = input.pattern;
+    return { type: "tool-running", toolName: name, description: typeof pattern === "string" ? pattern.slice(0, 40) : undefined };
+  }
+  return { type: "tool-running", toolName: name };
+}
+
 export function ChatInterface({
   projectPath,
   projectName,
@@ -106,6 +134,12 @@ export function ChatInterface({
   const streamedTextRef = useRef(false);
   const [chatMode, setChatMode] = useState<ChatMode>("default");
 
+  // ── Reconnect state ──────────────────────────────────────────────
+  const lastEventIndexRef = useRef(-1);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connected");
+  const lastEventTimeRef = useRef<number>(0);
+  const healthCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
@@ -123,67 +157,425 @@ export function ChatInterface({
   const lastUserMessageRef = useRef<string | null>(null);
   const [connectionLost, setConnectionLost] = useState(false);
 
-  // Detect browser resume after suspend (screen off, tab switch)
-  // Try to detect if stream is still alive before force-aborting
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible" && streamingRef.current) {
-        // Page just became visible while we think we're streaming.
-        // Wait a moment for buffered data, then check if connection survives.
-        // If no data arrives within 3s, assume the connection is dead.
-        const checkTimeout = setTimeout(() => {
-          if (streamingRef.current && abortRef.current) {
-            abortRef.current.abort();
-            setConnectionLost(true);
-            // Also tell server to abort
-            const qId = queryIdRef.current;
-            if (qId) {
-              fetch("/api/chat/abort", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ queryId: qId }),
-              }).catch(() => {});
-            }
-          }
-        }, 3000);
+  // ── Shared SSE event handler ──────────────────────────────────────
+  // Used by both sendMessage and reconnectToQuery
+  const handleSSEEvent = useCallback((event: SSEMessage, currentAssistantId: string) => {
+    // Track event index for reconnection
+    if (typeof event.index === "number") {
+      lastEventIndexRef.current = event.index;
+    }
+    // Track event time for staleness detection
+    lastEventTimeRef.current = Date.now();
 
-        // If streaming finishes naturally within 3s, cancel the abort
-        const checkInterval = setInterval(() => {
-          if (!streamingRef.current) {
-            clearTimeout(checkTimeout);
-            clearInterval(checkInterval);
-          }
-        }, 500);
-
-        return () => {
-          clearTimeout(checkTimeout);
-          clearInterval(checkInterval);
+    switch (event.type) {
+      case "query_start": {
+        queryIdRef.current = event.data.queryId as string;
+        break;
+      }
+      case "permission_request": {
+        const req: PermissionRequest = {
+          requestId: event.data.requestId as string,
+          queryId: event.data.queryId as string,
+          toolName: event.data.toolName as string,
+          input: event.data.input as Record<string, unknown>,
+          decisionReason: event.data.decisionReason as string | undefined,
         };
+        setPermissionQueue((prev) => [...prev, req]);
+        break;
+      }
+      case "init": {
+        const newSessionId = event.data.sessionId as string;
+        setSessionId(newSessionId);
+        localStorage.setItem(`cc-session-${projectPath}`, newSessionId);
+        break;
+      }
+      case "assistant": {
+        // When streaming via deltas, the assistant event delivers the FULL text block
+        // after streaming — skip it to avoid doubling the text
+        if (!streamedTextRef.current) {
+          const text = event.data.text as string;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === currentAssistantId
+                ? { ...m, content: m.content + text }
+                : m
+            )
+          );
+        }
+        break;
+      }
+      case "tool_call": {
+        const toolCall = {
+          name: event.data.name as string,
+          input: event.data.input as Record<string, unknown>,
+          id: event.data.id as string,
+        };
+        setActivityState(getToolActivityLabel(toolCall.name, toolCall.input));
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === currentAssistantId
+              ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] }
+              : m
+          )
+        );
+        break;
+      }
+      case "tool_result": {
+        const toolUseId = event.data.toolUseId as string;
+        const content = event.data.content as string;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === currentAssistantId
+              ? {
+                  ...m,
+                  toolCalls: m.toolCalls?.map((tc) =>
+                    tc.id === toolUseId ? { ...tc, result: content } : tc
+                  ),
+                }
+              : m
+          )
+        );
+        // Model is now analyzing results — show thinking indicator
+        setActivityState("thinking");
+        break;
+      }
+      case "tool_progress": {
+        const toolUseId = event.data.toolUseId as string;
+        const elapsedSeconds = event.data.elapsedSeconds as number;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === currentAssistantId
+              ? {
+                  ...m,
+                  toolCalls: m.toolCalls?.map((tc) =>
+                    tc.id === toolUseId ? { ...tc, elapsedSeconds } : tc
+                  ),
+                }
+              : m
+          )
+        );
+        break;
+      }
+      case "stream_event": {
+        const eventType = event.data.eventType as string;
+        if (eventType === "content_block_start") {
+          const blockType = event.data.blockType as string;
+          if (blockType === "text") {
+            setActivityState(null); // text about to stream
+            // Separate text segments with a paragraph break
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === currentAssistantId && m.content.length > 0
+                  ? { ...m, content: m.content + "\n\n" }
+                  : m
+              )
+            );
+          } else if (blockType === "tool_use") {
+            setActivityState("tool-starting");
+          }
+        } else if (eventType === "content_block_delta") {
+          const text = event.data.text as string | undefined;
+          if (text) {
+            streamedTextRef.current = true;
+            setActivityState(null);
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === currentAssistantId
+                  ? { ...m, content: m.content + text }
+                  : m
+              )
+            );
+          }
+        }
+        break;
+      }
+      case "context_update": {
+        const ctxTokens = event.data.contextTokens as number | undefined;
+        const ctxWindow = event.data.contextWindow as number | undefined;
+        if (ctxTokens !== undefined && ctxWindow !== undefined && ctxWindow > 0) {
+          setSessionStats({ contextTokens: ctxTokens, contextWindow: ctxWindow });
+        } else if (ctxTokens !== undefined) {
+          setSessionStats((prev) => prev ? { ...prev, contextTokens: ctxTokens } : prev);
+        }
+        break;
+      }
+      case "compact_boundary": {
+        const preTokens = event.data.preTokens as number | undefined;
+        const postTokens = event.data.postTokens as number | undefined;
+        const freed = preTokens && postTokens ? ((preTokens - postTokens) / 1000).toFixed(1) : "?";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === currentAssistantId
+              ? { ...m, content: m.content + `\n\n*[Context compacted — ${freed}k tokens freed]*\n\n` }
+              : m
+          )
+        );
+        break;
+      }
+      case "system": {
+        const sysContent = event.data.result as string | undefined;
+        if (sysContent) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === currentAssistantId
+                ? { ...m, content: m.content + sysContent }
+                : m
+            )
+          );
+        }
+        break;
+      }
+      case "result": {
+        const isError = event.data.isError as boolean | undefined;
+        const errors = event.data.errors as string[] | undefined;
+        const result = event.data.result as string | undefined;
+
+        if (isError && errors?.length) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === currentAssistantId
+                ? { ...m, content: m.content + `\n\n**Error:** ${errors.join("\n")}` }
+                : m
+            )
+          );
+        } else if (result) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === currentAssistantId && !m.content
+                ? { ...m, content: result }
+                : m
+            )
+          );
+        }
+        const contextTokens = event.data.contextTokens as number | undefined;
+        const contextWindow = event.data.contextWindow as number | undefined;
+        if (contextTokens !== undefined && contextWindow !== undefined) {
+          setSessionStats({ contextTokens, contextWindow });
+        }
+        const sid = event.data.sessionId as string | undefined;
+        if (sid) {
+          setSessionId(sid);
+          localStorage.setItem(`cc-session-${projectPath}`, sid);
+        }
+        break;
+      }
+      case "error": {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === currentAssistantId
+              ? { ...m, content: m.content + `\n\n**Error:** ${event.data.error}` }
+              : m
+          )
+        );
+        break;
+      }
+      case "buffer_gap": {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === currentAssistantId
+              ? { ...m, content: m.content + "\n\n*[Some events were lost during reconnection]*\n\n" }
+              : m
+          )
+        );
+        break;
+      }
+      // reconnect_complete and done are handled by the caller
+    }
+  }, [projectPath]);
+
+  // ── Reconnect to a running or completed query ─────────────────────
+  const reconnectToQuery = useCallback(async (assistantId: string) => {
+    const sid = sessionId;
+    if (!sid) return;
+
+    setConnectionState("reconnecting");
+
+    try {
+      const fetchAbort = new AbortController();
+      abortRef.current = fetchAbort;
+
+      const res = await fetch("/api/chat/reconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: sid,
+          fromIndex: lastEventIndexRef.current,
+        }),
+        signal: fetchAbort.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        setConnectionState("disconnected");
+        return;
+      }
+
+      setConnectionState("connected");
+      const reader = res.body.getReader();
+
+      for await (const event of parseSSEStream(reader)) {
+        // Skip events we already processed (dedup safety)
+        if (typeof event.index === "number" && event.index <= lastEventIndexRef.current) {
+          continue;
+        }
+
+        if (event.type === "reconnect_complete" || event.type === "done") {
+          break;
+        }
+
+        handleSSEEvent(event, assistantId);
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User-initiated abort during reconnect
+      } else {
+        setConnectionState("disconnected");
+      }
+    }
+  }, [sessionId, handleSSEEvent]);
+
+  // ── Smart visibility handler — status check + reconnect ───────────
+  useEffect(() => {
+    const handleVisibility = async () => {
+      if (document.visibilityState !== "visible" || !streamingRef.current) return;
+
+      const sid = sessionId;
+      if (!sid) return;
+
+      // Check server status first (fast JSON call)
+      try {
+        const statusRes = await fetch(`/api/chat/status?sessionId=${encodeURIComponent(sid)}`);
+        if (!statusRes.ok) {
+          setConnectionState("disconnected");
+          return;
+        }
+
+        const status = await statusRes.json();
+
+        if (status.queryActive || status.status === "completed" || status.status === "error") {
+          // Query exists on server — abort stale SSE and reconnect
+          abortRef.current?.abort();
+          const aid = assistantIdRef.current;
+          if (aid) {
+            await reconnectToQuery(aid);
+          }
+
+          // If query is done, finalize
+          if (!status.queryActive) {
+            setIsStreaming(false);
+            streamingRef.current = false;
+            abortRef.current = null;
+            queryIdRef.current = null;
+            assistantIdRef.current = null;
+            setActivityState(null);
+            streamedTextRef.current = false;
+            setPermissionQueue([]);
+            wakeLockRef.current?.release().catch(() => {});
+            wakeLockRef.current = null;
+          }
+        } else {
+          // No query on server — connection truly lost, query died
+          setConnectionLost(true);
+          setIsStreaming(false);
+          streamingRef.current = false;
+          abortRef.current?.abort();
+          abortRef.current = null;
+          setActivityState(null);
+        }
+      } catch {
+        // Can't reach server at all
+        setConnectionState("disconnected");
       }
     };
+
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, []);
+  }, [sessionId, reconnectToQuery]);
 
-  // 2A: Network loss detection
+  // ── Periodic health check during streaming ────────────────────────
+  useEffect(() => {
+    if (isStreaming) {
+      lastEventTimeRef.current = Date.now();
+
+      healthCheckIntervalRef.current = setInterval(async () => {
+        if (!streamingRef.current) return;
+
+        // Check for stale connection (no events in 20s)
+        const staleness = Date.now() - lastEventTimeRef.current;
+        if (staleness > 20_000) {
+          setConnectionState("stale");
+        }
+
+        // Periodic status poll every 10s
+        const sid = sessionId;
+        if (!sid) return;
+
+        try {
+          const statusRes = await fetch(`/api/chat/status?sessionId=${encodeURIComponent(sid)}`);
+          if (!statusRes.ok) return;
+
+          const status = await statusRes.json();
+
+          if (!status.queryActive && status.status !== "running") {
+            // Query ended while we were streaming — might have missed done event
+            if (streamingRef.current) {
+              abortRef.current?.abort();
+              const aid = assistantIdRef.current;
+              if (aid) {
+                await reconnectToQuery(aid);
+              }
+              // Finalize
+              setIsStreaming(false);
+              streamingRef.current = false;
+              abortRef.current = null;
+              queryIdRef.current = null;
+              assistantIdRef.current = null;
+              setActivityState(null);
+              streamedTextRef.current = false;
+              setPermissionQueue([]);
+              wakeLockRef.current?.release().catch(() => {});
+              wakeLockRef.current = null;
+            }
+          }
+        } catch {
+          // Status check failed — non-critical
+        }
+      }, 10_000);
+
+      return () => {
+        if (healthCheckIntervalRef.current) {
+          clearInterval(healthCheckIntervalRef.current);
+          healthCheckIntervalRef.current = null;
+        }
+      };
+    } else {
+      setConnectionState("connected");
+    }
+  }, [isStreaming, sessionId, reconnectToQuery]);
+
+  // ── Network loss detection ────────────────────────────────────────
   const [isOffline, setIsOffline] = useState(false);
   useEffect(() => {
     const handleOffline = () => {
       setIsOffline(true);
-      // If streaming when we go offline, mark connection lost
-      if (streamingRef.current && abortRef.current) {
-        abortRef.current.abort();
-        setConnectionLost(true);
+      if (streamingRef.current) {
+        // Don't abort — server keeps running. Just mark disconnected.
+        setConnectionState("disconnected");
       }
     };
-    const handleOnline = () => setIsOffline(false);
+    const handleOnline = () => {
+      setIsOffline(false);
+      // If we were streaming, try to reconnect
+      if (streamingRef.current && assistantIdRef.current) {
+        reconnectToQuery(assistantIdRef.current);
+      }
+    };
     window.addEventListener("offline", handleOffline);
     window.addEventListener("online", handleOnline);
     return () => {
       window.removeEventListener("offline", handleOffline);
       window.removeEventListener("online", handleOnline);
     };
-  }, []);
+  }, [reconnectToQuery]);
 
   const sendMessage = async (overrideText?: string) => {
     const trimmed = overrideText || input.trim();
@@ -194,7 +586,6 @@ export function ChatInterface({
       setInput("");
       const oldSessionId = sessionId;
       startNewConversation();
-      // Fire-and-forget: tell server to clean up session state
       if (oldSessionId) {
         fetch("/api/chat", {
           method: "POST",
@@ -204,7 +595,6 @@ export function ChatInterface({
       }
       return;
     }
-    // Everything else goes to the server (built-in commands, custom .md, SDK pass-through)
 
     const userMessage: MessageBlock = {
       id: crypto.randomUUID(),
@@ -218,14 +608,16 @@ export function ChatInterface({
     streamingRef.current = true;
     lastUserMessageRef.current = trimmed;
     setConnectionLost(false);
+    lastEventIndexRef.current = -1;
+    setConnectionState("connected");
 
-    // Request wake lock to prevent screen from turning off during response
+    // Request wake lock
     try {
       if ("wakeLock" in navigator) {
         wakeLockRef.current = await navigator.wakeLock.request("screen");
       }
     } catch {
-      // Wake lock not supported or denied — non-critical
+      // Non-critical
     }
 
     // Create placeholder assistant message
@@ -263,240 +655,41 @@ export function ChatInterface({
       const reader = res.body.getReader();
 
       for await (const event of parseSSEStream(reader)) {
-        switch (event.type) {
-          case "query_start": {
-            queryIdRef.current = event.data.queryId as string;
-            break;
-          }
-          case "permission_request": {
-            const req: PermissionRequest = {
-              requestId: event.data.requestId as string,
-              queryId: event.data.queryId as string,
-              toolName: event.data.toolName as string,
-              input: event.data.input as Record<string, unknown>,
-              decisionReason: event.data.decisionReason as string | undefined,
-            };
-            setPermissionQueue((prev) => [...prev, req]);
-            break;
-          }
-          case "init": {
-            const newSessionId = event.data.sessionId as string;
-            setSessionId(newSessionId);
-
-            localStorage.setItem(`cc-session-${projectPath}`, newSessionId);
-            break;
-          }
-          case "assistant": {
-            // When streaming via deltas, the assistant event delivers the FULL text block
-            // after streaming — skip it to avoid doubling the text
-            if (!streamedTextRef.current) {
-              const text = event.data.text as string;
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + text }
-                    : m
-                )
-              );
-            }
-            break;
-          }
-          case "tool_call": {
-            const toolCall = {
-              name: event.data.name as string,
-              input: event.data.input as Record<string, unknown>,
-              id: event.data.id as string,
-            };
-            setActivityState(null); // ToolCallIndicator takes over
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] }
-                  : m
-              )
-            );
-            break;
-          }
-          case "tool_result": {
-            const toolUseId = event.data.toolUseId as string;
-            const content = event.data.content as string;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      toolCalls: m.toolCalls?.map((tc) =>
-                        tc.id === toolUseId ? { ...tc, result: content } : tc
-                      ),
-                    }
-                  : m
-              )
-            );
-            // Model is now analyzing results — show thinking indicator
-            setActivityState("thinking");
-            break;
-          }
-          case "tool_progress": {
-            const toolUseId = event.data.toolUseId as string;
-            const elapsedSeconds = event.data.elapsedSeconds as number;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      toolCalls: m.toolCalls?.map((tc) =>
-                        tc.id === toolUseId ? { ...tc, elapsedSeconds } : tc
-                      ),
-                    }
-                  : m
-              )
-            );
-            break;
-          }
-          case "stream_event": {
-            const eventType = event.data.eventType as string;
-            if (eventType === "content_block_start") {
-              const blockType = event.data.blockType as string;
-              if (blockType === "text") {
-                setActivityState(null); // text about to stream
-                // Separate text segments with a paragraph break (e.g. text before vs after tool calls)
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId && m.content.length > 0
-                      ? { ...m, content: m.content + "\n\n" }
-                      : m
-                  )
-                );
-              } else if (blockType === "tool_use") {
-                setActivityState("tool-starting");
-              }
-            } else if (eventType === "content_block_delta") {
-              const text = event.data.text as string | undefined;
-              if (text) {
-                streamedTextRef.current = true;
-                setActivityState(null);
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId
-                      ? { ...m, content: m.content + text }
-                      : m
-                  )
-                );
-              }
-            }
-            // content_block_stop — no action needed
-            break;
-          }
-          case "context_update": {
-            const ctxTokens = event.data.contextTokens as number | undefined;
-            const ctxWindow = event.data.contextWindow as number | undefined;
-            if (ctxTokens !== undefined && ctxWindow !== undefined && ctxWindow > 0) {
-              setSessionStats({ contextTokens: ctxTokens, contextWindow: ctxWindow });
-            } else if (ctxTokens !== undefined) {
-              // Update tokens even if we don't have contextWindow yet
-              setSessionStats((prev) => prev ? { ...prev, contextTokens: ctxTokens } : prev);
-            }
-            break;
-          }
-          case "compact_boundary": {
-            const preTokens = event.data.preTokens as number | undefined;
-            const postTokens = event.data.postTokens as number | undefined;
-            const freed = preTokens && postTokens ? ((preTokens - postTokens) / 1000).toFixed(1) : "?";
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? { ...m, content: m.content + `\n\n*[Context compacted — ${freed}k tokens freed]*\n\n` }
-                  : m
-              )
-            );
-            break;
-          }
-          case "system": {
-            // SDK system events (context info, etc.)
-            const subtype = event.data.subtype as string;
-            const sysContent = event.data.result as string | undefined;
-            if (sysContent) {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + sysContent }
-                    : m
-                )
-              );
-            } else {
-              // Log the raw event data for subtypes that don't have a result string
-              console.log(`[system event] subtype=${subtype}`, event.data);
-            }
-            break;
-          }
-          case "result": {
-            const isError = event.data.isError as boolean | undefined;
-            const errors = event.data.errors as string[] | undefined;
-            const result = event.data.result as string | undefined;
-
-            if (isError && errors?.length) {
-              // Show SDK error results that were previously swallowed
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? {
-                        ...m,
-                        content: m.content + `\n\n**Error:** ${errors.join("\n")}`,
-                      }
-                    : m
-                )
-              );
-            } else if (result) {
-              // Use result text as fallback if no streamed content
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId && !m.content
-                    ? { ...m, content: result }
-                    : m
-                )
-              );
-            }
-            // Update session stats from result event
-            const contextTokens = event.data.contextTokens as number | undefined;
-            const contextWindow = event.data.contextWindow as number | undefined;
-            if (contextTokens !== undefined && contextWindow !== undefined) {
-              setSessionStats({ contextTokens, contextWindow });
-            }
-
-            const sid = event.data.sessionId as string | undefined;
-            if (sid) {
-              setSessionId(sid);
-              localStorage.setItem(`cc-session-${projectPath}`, sid);
-            }
-            break;
-          }
-          case "error": {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      content:
-                        m.content +
-                        `\n\n**Error:** ${event.data.error}`,
-                    }
-                  : m
-              )
-            );
-            break;
-          }
-        }
+        if (event.type === "done") break;
+        handleSSEEvent(event, assistantId);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        // Append stopped indicator — covers both user Stop and visibility-triggered abort
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: m.content + "\n\n*[Connection lost — response may be incomplete]*" }
-              : m
-          )
-        );
+        // Could be user Stop, visibility reconnect, or network loss
+        // Don't append "connection lost" — the visibility handler will reconnect
+        if (connectionState === "reconnecting") {
+          // Reconnect in progress — the reconnect handler manages this
+        } else {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: m.content + "\n\n*[Connection interrupted — checking server...]*" }
+                : m
+            )
+          );
+          // Try to reconnect automatically
+          try {
+            const sid = sessionId;
+            if (sid) {
+              const statusRes = await fetch(`/api/chat/status?sessionId=${encodeURIComponent(sid)}`);
+              if (statusRes.ok) {
+                const status = await statusRes.json();
+                if (status.queryActive || status.status === "completed") {
+                  await reconnectToQuery(assistantId);
+                  return; // Don't go to finally cleanup — reconnect handled it
+                }
+              }
+            }
+          } catch {
+            // Reconnect attempt failed
+          }
+          setConnectionLost(true);
+        }
       } else {
         setMessages((prev) =>
           prev.map((m) =>
@@ -518,7 +711,6 @@ export function ChatInterface({
       setActivityState(null);
       streamedTextRef.current = false;
       setPermissionQueue([]);
-      // Release wake lock
       wakeLockRef.current?.release().catch(() => {});
       wakeLockRef.current = null;
     }
@@ -530,14 +722,13 @@ export function ChatInterface({
     setSessionStats(null);
     setPermissionQueue([]);
     setChatMode("default");
+    lastEventIndexRef.current = -1;
     localStorage.removeItem(`cc-session-${projectPath}`);
     localStorage.removeItem(`${CHAT_STORAGE_PREFIX}${projectPath}`);
   };
 
   const stopQuery = () => {
-    // Abort the fetch connection
     abortRef.current?.abort();
-    // Fire-and-forget: tell server to abort the SDK query
     const qId = queryIdRef.current;
     if (qId) {
       fetch("/api/chat/abort", {
@@ -548,9 +739,44 @@ export function ChatInterface({
     }
   };
 
-  const retryLastMessage = () => {
+  // ── Smart retry: reconnect if query exists, resend only if truly gone ──
+  const retryLastMessage = async () => {
+    if (isStreaming) return;
+
+    const sid = sessionId;
+    if (sid) {
+      try {
+        const statusRes = await fetch(`/api/chat/status?sessionId=${encodeURIComponent(sid)}`);
+        if (statusRes.ok) {
+          const status = await statusRes.json();
+          if (status.queryActive || status.status === "completed" || status.status === "error") {
+            // Query still exists — reconnect instead of resend
+            setConnectionLost(false);
+            setIsStreaming(true);
+            streamingRef.current = true;
+            setActivityState("thinking");
+
+            // Find the last assistant message to use as reconnect target
+            const lastAssistant = [...messages].reverse().find(m => m.role === "assistant");
+            if (lastAssistant) {
+              assistantIdRef.current = lastAssistant.id;
+              await reconnectToQuery(lastAssistant.id);
+              setIsStreaming(false);
+              streamingRef.current = false;
+              assistantIdRef.current = null;
+              setActivityState(null);
+              return;
+            }
+          }
+        }
+      } catch {
+        // Status check failed — fall through to resend
+      }
+    }
+
+    // No query on server — resend
     const lastMsg = lastUserMessageRef.current;
-    if (!lastMsg || isStreaming) return;
+    if (!lastMsg) return;
     setConnectionLost(false);
     sendMessage(lastMsg);
   };
@@ -612,7 +838,7 @@ export function ChatInterface({
       {isOffline && (
         <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 text-yellow-500 text-xs shrink-0">
           <WifiOff size={14} />
-          Network lost — reconnect to continue
+          Network lost — server keeps working, will reconnect automatically
         </div>
       )}
 
@@ -647,19 +873,13 @@ export function ChatInterface({
                 ))}
                 {/* Text content */}
                 {msg.content && <StreamingMessage content={msg.content} />}
-                {/* Activity indicator — shows between tool calls and during thinking */}
-                {isStreaming &&
-                  msg === messages[messages.length - 1] &&
-                  activityState && (
-                    <ActivityIndicator state={activityState} />
-                  )}
-                {/* Retry button when connection was lost */}
+                {/* Retry/Reconnect button when connection was lost */}
                 {connectionLost && !isStreaming && idx === messages.length - 1 && (
                   <button
                     onClick={retryLastMessage}
                     className="mt-2 px-3 py-1.5 text-xs bg-accent/20 text-accent rounded-lg hover:bg-accent/30 transition-colors"
                   >
-                    Retry last message
+                    Reconnect
                   </button>
                 )}
               </div>
@@ -669,7 +889,7 @@ export function ChatInterface({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Context bar + Input area */}
+      {/* Context bar + Status bar + Input area */}
       <div className="border-t border-border shrink-0">
         {sessionStats && sessionStats.contextWindow > 0 && (
           <div className="px-4 pt-2 pb-0">
@@ -695,6 +915,15 @@ export function ChatInterface({
             </div>
           </div>
         )}
+
+        {/* Sticky status bar — always visible during streaming */}
+        {isStreaming && (
+          <StatusBar
+            activityState={activityState}
+            connectionState={connectionState}
+          />
+        )}
+
         <div className="flex items-center justify-between px-4 pt-2 pb-0">
           <ModeSelector mode={chatMode} onChange={handleModeChange} disabled={isStreaming} />
         </div>

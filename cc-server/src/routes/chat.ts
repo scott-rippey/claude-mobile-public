@@ -6,6 +6,17 @@ import path from "path";
 import fs from "fs/promises";
 import os from "os";
 import type { ChatRequest } from "../types.js";
+import {
+  QueryRunner,
+  registerRunner,
+  updateRunnerSessionId,
+  getRunnerByQueryId,
+  getRunnerBySessionId,
+  markRunnerCompleted,
+  getRunnerStats,
+  type IndexedEvent,
+  type EventListener,
+} from "../query-runner.js";
 
 const router = Router();
 const DEFAULT_MODEL = "claude-opus-4-6";
@@ -335,6 +346,35 @@ const BUILTIN_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void>> =
   status: handleStatus,
 };
 
+// ── Helper: subscribe an SSE response to a QueryRunner ──────────────
+function subscribeResponse(
+  res: import("express").Response,
+  runner: QueryRunner
+): { listener: EventListener; heartbeat: ReturnType<typeof setInterval> } {
+  const listener: EventListener = (event: IndexedEvent) => {
+    try {
+      res.write(`data: ${JSON.stringify({ type: event.type, data: event.data, index: event.index })}\n\n`);
+    } catch {
+      // Connection dead — remove listener
+      runner.removeListener(listener);
+    }
+  };
+
+  runner.addListener(listener);
+
+  // SSE heartbeat — keep connection alive through proxies
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`event: keepalive\ndata: {}\n\n`);
+    } catch {
+      clearInterval(heartbeat);
+      runner.removeListener(listener);
+    }
+  }, 15_000);
+
+  return { listener, heartbeat };
+}
+
 // ── POST /api/chat — SSE streaming response ────────────────────────
 router.post("/", async (req, res) => {
   const baseDir = process.env.BASE_DIR!;
@@ -358,7 +398,7 @@ router.post("/", async (req, res) => {
     "X-Accel-Buffering": "no",
   });
 
-  const sendEvent = (type: string, data: unknown) => {
+  const sendEventDirect = (type: string, data: unknown) => {
     res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
   };
 
@@ -372,12 +412,12 @@ router.post("/", async (req, res) => {
         console.error(`[chat] built-in command: /${cmdName}`);
         const session = getSession(sessionId);
         try {
-          await handler({ sendEvent, cwd, sessionId, session, args: cmdArgs });
+          await handler({ sendEvent: sendEventDirect, cwd, sessionId, session, args: cmdArgs });
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          sendEvent("error", { error: errMsg });
+          sendEventDirect("error", { error: errMsg });
         }
-        sendEvent("done", {});
+        sendEventDirect("done", {});
         res.end();
         return;
       }
@@ -398,14 +438,15 @@ router.post("/", async (req, res) => {
   activeAborts.set(queryId, abortController);
   let resultSessionId = sessionId;
 
-  // ── SSE heartbeat — keep connection alive through proxies ────────
-  const heartbeat = setInterval(() => {
-    res.write(`event: keepalive\ndata: {}\n\n`);
-  }, 15_000);
+  // Create QueryRunner — decouples query lifecycle from SSE connection
+  const runner = new QueryRunner(queryId, sessionId || queryId, abortController);
+  registerRunner(runner);
 
-  // Clean up abort + pending permissions for this query
+  // Subscribe this SSE response as a listener on the runner
+  const { listener, heartbeat } = subscribeResponse(res, runner);
+
+  // Clean up abort + pending permissions for this query (called when query ends)
   const cleanupQuery = () => {
-    clearInterval(heartbeat);
     activeAborts.delete(queryId);
     if (resultSessionId) activeQueries.delete(resultSessionId);
     // Deny all pending permissions for this query
@@ -418,13 +459,17 @@ router.post("/", async (req, res) => {
     }
   };
 
+  // Client disconnect: remove listener but do NOT abort the query
   res.on("close", () => {
-    console.error(`[chat] client disconnected, aborting query ${queryId}`);
-    if (activeAborts.has(queryId)) {
-      abortController.abort();
-    }
-    cleanupQuery();
+    console.error(`[chat] client disconnected from query ${queryId} (query continues running)`);
+    clearInterval(heartbeat);
+    runner.removeListener(listener);
   });
+
+  // Use runner.bufferEvent as the sendEvent for the SDK loop
+  const sendEvent = (type: string, data: unknown) => {
+    runner.bufferEvent(type, data);
+  };
 
   try {
     console.error(`[chat] prompt=${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
@@ -474,7 +519,7 @@ router.post("/", async (req, res) => {
 
             pendingPermissions.set(requestId, { resolve, reject, timeout, input });
 
-            // 3C: Check if already aborted before registering listener
+            // Check if already aborted before registering listener
             if (options.signal.aborted) {
               clearTimeout(timeout);
               clearTimeout(warning);
@@ -541,6 +586,11 @@ router.post("/", async (req, res) => {
           if (m.subtype === "init") {
             resultSessionId = m.session_id;
             activeQueries.set(m.session_id, response);
+
+            // Update runner's sessionId mapping now that we have the real one
+            if (m.session_id && m.session_id !== runner.sessionId) {
+              updateRunnerSessionId(queryId, runner.sessionId, m.session_id);
+            }
 
             // Track init data in session state
             session.lastInit = {
@@ -635,8 +685,6 @@ router.post("/", async (req, res) => {
           // Track cost, message count, and context window size
           if (m.total_cost_usd) session.totalCostUsd += m.total_cost_usd;
           session.messageCount++;
-          // Note: m.usage is CUMULATIVE across all API calls — don't use it for context size.
-          // Context size is tracked per-turn from assistant message usage instead.
           if (m.modelUsage) {
             const modelData = Object.values(m.modelUsage)[0] as { contextWindow?: number } | undefined;
             if (modelData?.contextWindow) session.contextWindow = modelData.contextWindow;
@@ -673,7 +721,6 @@ router.post("/", async (req, res) => {
           const eventType = event.type as string;
 
           if (eventType === "message_start") {
-            // message_start has per-turn usage — the most reliable context size signal
             const usage = event.message?.usage;
             if (usage) {
               session.contextTokens =
@@ -703,14 +750,12 @@ router.post("/", async (req, res) => {
                 text: delta.text,
               });
             }
-            // Skip input_json_delta — redundant with tool_call event
           } else if (eventType === "content_block_stop") {
             sendEvent("stream_event", {
               eventType,
               index: event.index,
             });
           }
-          // Skip message_delta, message_stop — not useful for UI
           break;
         }
 
@@ -726,15 +771,102 @@ router.post("/", async (req, res) => {
       sendEvent("error", { error: "SDK returned no events" });
     }
     sendEvent("done", {});
-    res.end();
+    runner.setStatus("completed");
+    markRunnerCompleted(queryId);
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.stack || err.message : String(err);
     console.error(`[chat] ERROR: ${errMsg}`);
     sendEvent("error", { error: errMsg });
-    res.end();
+    runner.setStatus("error");
+    markRunnerCompleted(queryId);
   } finally {
     cleanupQuery();
+    // End any still-connected responses
+    try { res.end(); } catch { /* already closed */ }
   }
+});
+
+// ── GET /api/chat/status — lightweight query status check ──────────
+router.get("/status", (req, res) => {
+  const sessionId = req.query.sessionId as string | undefined;
+  if (!sessionId) {
+    res.status(400).json({ error: "sessionId is required" });
+    return;
+  }
+
+  const runner = getRunnerBySessionId(sessionId);
+  if (!runner) {
+    res.json({ queryActive: false, queryId: null, eventCount: 0, status: "none" });
+    return;
+  }
+
+  res.json({
+    queryActive: runner.status === "running",
+    queryId: runner.queryId,
+    eventCount: runner.eventCount,
+    status: runner.status,
+  });
+});
+
+// ── POST /api/chat/reconnect — replay + subscribe to running query ──
+router.post("/reconnect", (req, res) => {
+  const { sessionId, fromIndex } = req.body as { sessionId?: string; fromIndex?: number };
+
+  if (!sessionId) {
+    res.status(400).json({ error: "sessionId is required" });
+    return;
+  }
+
+  const runner = getRunnerBySessionId(sessionId);
+  if (!runner) {
+    res.status(404).json({ error: "No active or recent query for this session" });
+    return;
+  }
+
+  // Set up SSE response
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const writeEvent = (type: string, data: unknown, index?: number) => {
+    res.write(`data: ${JSON.stringify({ type, data, index })}\n\n`);
+  };
+
+  // Replay buffered events from the requested index
+  const startIndex = typeof fromIndex === "number" ? fromIndex + 1 : 0; // fromIndex is last received, so start at +1
+  const { events, gap } = runner.replayFrom(startIndex);
+
+  if (gap) {
+    writeEvent("buffer_gap", {
+      message: "Some events were lost due to buffer overflow",
+      firstAvailable: runner.firstBufferedIndex,
+      requested: startIndex,
+    });
+  }
+
+  // Replay all buffered events
+  for (const event of events) {
+    writeEvent(event.type, event.data, event.index);
+  }
+
+  // If query is done, send completion and close
+  if (runner.status !== "running") {
+    writeEvent("reconnect_complete", { status: runner.status, eventCount: runner.eventCount });
+    res.end();
+    return;
+  }
+
+  // Query still running — subscribe as live listener
+  const { listener, heartbeat } = subscribeResponse(res, runner);
+
+  res.on("close", () => {
+    console.error(`[chat] reconnect client disconnected from query ${runner.queryId}`);
+    clearInterval(heartbeat);
+    runner.removeListener(listener);
+  });
 });
 
 // ── POST /api/chat/abort — abort an active query ────────────────────
@@ -747,6 +879,13 @@ router.post("/abort", (req, res) => {
 
   const controller = activeAborts.get(queryId);
   if (!controller) {
+    // Also check the runner registry
+    const runner = getRunnerByQueryId(queryId);
+    if (runner && runner.status === "running") {
+      runner.abort();
+      res.json({ ok: true });
+      return;
+    }
     res.status(404).json({ error: "Query not found or already finished" });
     return;
   }
@@ -810,7 +949,6 @@ router.post("/mode", async (req, res) => {
       console.error(`[chat] mode changed to ${sdkMode} (live, sessionId=${sessionId})`);
     } catch (err) {
       console.error(`[chat] setPermissionMode failed: ${err}`);
-      // Still save the session mode — it'll apply on next query
     }
   } else {
     console.error(`[chat] mode changed to ${sdkMode} (next query, sessionId=${sessionId || "none"})`);
@@ -826,6 +964,7 @@ export function getChatStats() {
     activeAborts: activeAborts.size,
     activeQueries: activeQueries.size,
     pendingPermissions: pendingPermissions.size,
+    ...getRunnerStats(),
   };
 }
 

@@ -9,6 +9,8 @@ interface TerminalEntry {
   output: string;
   exitCode: number | null;
   running: boolean;
+  commandId?: string;  // Server-assigned ID for reconnection
+  lastEventIndex: number;  // Last received event index
 }
 
 interface TerminalProps {
@@ -36,6 +38,7 @@ export function Terminal({ projectPath }: TerminalProps) {
   const nextId = useRef(0);
   const runningRef = useRef(false);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const runningEntryRef = useRef<{ id: number; commandId: string | null; lastEventIndex: number } | null>(null);
 
   const isRunning = entries.some((e) => e.running);
 
@@ -57,33 +60,6 @@ export function Terminal({ projectPath }: TerminalProps) {
     scrollToBottom();
   }, [entries, scrollToBottom]);
 
-  // Detect browser resume after suspend — check if connection is still alive
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible" && runningRef.current) {
-        // Wait 3s for buffered data to flush; if still running, connection is dead
-        const checkTimeout = setTimeout(() => {
-          if (runningRef.current && abortRef.current) {
-            abortRef.current.abort();
-          }
-        }, 3000);
-        // If command finishes naturally, cancel the abort
-        const checkInterval = setInterval(() => {
-          if (!runningRef.current) {
-            clearTimeout(checkTimeout);
-            clearInterval(checkInterval);
-          }
-        }, 500);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, []);
-
-  const killProcess = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
-
   const markDone = useCallback((id: number, output: string, exitCode: number) => {
     setEntries((prev) =>
       prev.map((e) => {
@@ -99,25 +75,169 @@ export function Terminal({ projectPath }: TerminalProps) {
     );
   }, []);
 
+  // ── Reconnect to a running terminal command ─────────────────────
+  const reconnectToCommand = useCallback(async (entryId: number, commandId: string, fromIndex: number) => {
+    try {
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const res = await fetch("/api/terminal/reconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commandId, fromIndex }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) return;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            // Track index
+            if (typeof event.index === "number") {
+              // Skip already-seen events
+              if (event.index <= fromIndex) continue;
+              if (runningEntryRef.current) {
+                runningEntryRef.current.lastEventIndex = event.index;
+              }
+              setEntries((prev) =>
+                prev.map((e) =>
+                  e.id === entryId ? { ...e, lastEventIndex: event.index } : e
+                )
+              );
+            }
+
+            if (event.type === "stdout" || event.type === "stderr") {
+              setEntries((prev) =>
+                prev.map((e) =>
+                  e.id === entryId ? { ...e, output: e.output + event.data } : e
+                )
+              );
+            } else if (event.type === "exit") {
+              setEntries((prev) =>
+                prev.map((e) =>
+                  e.id === entryId
+                    ? { ...e, running: false, exitCode: event.data.code }
+                    : e
+                )
+              );
+            } else if (event.type === "reconnect_complete") {
+              // Command finished before we reconnected
+              if (event.data?.exitCode !== undefined) {
+                setEntries((prev) =>
+                  prev.map((e) =>
+                    e.id === entryId
+                      ? { ...e, running: false, exitCode: event.data.exitCode }
+                      : e
+                  )
+                );
+              }
+            } else if (event.type === "buffer_gap") {
+              setEntries((prev) =>
+                prev.map((e) =>
+                  e.id === entryId
+                    ? { ...e, output: e.output + "\n[some output lost during reconnection]\n" }
+                    : e
+                )
+              );
+            } else if (event.type === "error") {
+              markDone(entryId, event.data.error || event.data.message, 1);
+            }
+          } catch {
+            // skip malformed
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User abort during reconnect
+      }
+    } finally {
+      abortRef.current = null;
+      runningRef.current = false;
+      runningEntryRef.current = null;
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
+    }
+  }, [markDone]);
+
+  // ── Visibility handler — reconnect instead of abort ───────────────
+  useEffect(() => {
+    const handleVisibility = async () => {
+      if (document.visibilityState !== "visible" || !runningRef.current) return;
+
+      const entry = runningEntryRef.current;
+      if (!entry?.commandId) return;
+
+      // Check server status
+      try {
+        const statusRes = await fetch(`/api/terminal/status?commandId=${encodeURIComponent(entry.commandId)}`);
+        if (!statusRes.ok) return;
+
+        const status = await statusRes.json();
+
+        if (status.active || status.status === "completed") {
+          // Command still exists — abort stale connection and reconnect
+          abortRef.current?.abort();
+          await reconnectToCommand(entry.id, entry.commandId, entry.lastEventIndex);
+
+          if (!status.active) {
+            // Command finished
+            runningRef.current = false;
+            runningEntryRef.current = null;
+          }
+        } else {
+          // Command gone from server
+          markDone(entry.id, "\n[command lost — server restarted?]", 1);
+          runningRef.current = false;
+          runningEntryRef.current = null;
+        }
+      } catch {
+        // Status check failed
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [reconnectToCommand, markDone]);
+
+  const killProcess = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
   const executeCommand = useCallback(
     async (command: string) => {
       const id = nextId.current++;
 
       setEntries((prev) => [
         ...prev,
-        { id, command, output: "", exitCode: null, running: true },
+        { id, command, output: "", exitCode: null, running: true, lastEventIndex: -1 },
       ]);
       setCommandHistory((prev) => [...prev, command]);
       setHistoryIndex(-1);
       runningRef.current = true;
 
-      // Request wake lock to prevent screen off during command
+      // Request wake lock
       try {
         if ("wakeLock" in navigator) {
           wakeLockRef.current = await navigator.wakeLock.request("screen");
         }
       } catch {
-        // Wake lock not supported or denied — non-critical
+        // Non-critical
       }
 
       const controller = new AbortController();
@@ -132,7 +252,6 @@ export function Terminal({ projectPath }: TerminalProps) {
         });
 
         if (!res.ok) {
-          // Error response — read as text, try to parse JSON
           const rawBody = await res.text();
           let errorMsg = `HTTP ${res.status}`;
           try {
@@ -145,7 +264,6 @@ export function Terminal({ projectPath }: TerminalProps) {
           return;
         }
 
-        // SSE stream — read chunks and parse events
         const reader = res.body?.getReader();
         if (!reader) {
           markDone(id, "No response body", 1);
@@ -168,7 +286,29 @@ export function Terminal({ projectPath }: TerminalProps) {
             if (!line.startsWith("data: ")) continue;
             try {
               const event = JSON.parse(line.slice(6));
-              if (event.type === "stdout" || event.type === "stderr") {
+
+              // Track event index and commandId
+              if (typeof event.index === "number") {
+                runningEntryRef.current = {
+                  ...runningEntryRef.current!,
+                  lastEventIndex: event.index,
+                };
+                setEntries((prev) =>
+                  prev.map((e) =>
+                    e.id === id ? { ...e, lastEventIndex: event.index } : e
+                  )
+                );
+              }
+
+              if (event.type === "command_start") {
+                const commandId = event.data.commandId as string;
+                runningEntryRef.current = { id, commandId, lastEventIndex: event.index ?? -1 };
+                setEntries((prev) =>
+                  prev.map((e) =>
+                    e.id === id ? { ...e, commandId } : e
+                  )
+                );
+              } else if (event.type === "stdout" || event.type === "stderr") {
                 setEntries((prev) =>
                   prev.map((e) =>
                     e.id === id ? { ...e, output: e.output + event.data } : e
@@ -194,11 +334,49 @@ export function Terminal({ projectPath }: TerminalProps) {
         }
 
         if (!gotExit) {
+          // Connection ended without exit — command may still be running on server
+          // Check status and potentially reconnect
+          const entry = runningEntryRef.current;
+          if (entry?.commandId) {
+            try {
+              const statusRes = await fetch(`/api/terminal/status?commandId=${encodeURIComponent(entry.commandId)}`);
+              if (statusRes.ok) {
+                const status = await statusRes.json();
+                if (status.active) {
+                  // Still running — reconnect
+                  await reconnectToCommand(id, entry.commandId, entry.lastEventIndex);
+                  return;
+                } else if (status.status === "completed") {
+                  // Finished — replay remaining events
+                  await reconnectToCommand(id, entry.commandId, entry.lastEventIndex);
+                  return;
+                }
+              }
+            } catch {
+              // Fall through
+            }
+          }
           markDone(id, "", 1);
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          markDone(id, "\n[connection lost]", 130);
+          // Try to reconnect if command is still running on server
+          const entry = runningEntryRef.current;
+          if (entry?.commandId) {
+            try {
+              const statusRes = await fetch(`/api/terminal/status?commandId=${encodeURIComponent(entry.commandId)}`);
+              if (statusRes.ok) {
+                const status = await statusRes.json();
+                if (status.active || status.status === "completed") {
+                  await reconnectToCommand(id, entry.commandId, entry.lastEventIndex);
+                  return;
+                }
+              }
+            } catch {
+              // Fall through to abort indication
+            }
+          }
+          markDone(id, "\n[stopped]", 130);
         } else {
           const msg = err instanceof Error ? err.message : "Connection error";
           markDone(id, msg, 1);
@@ -207,10 +385,11 @@ export function Terminal({ projectPath }: TerminalProps) {
 
       abortRef.current = null;
       runningRef.current = false;
+      runningEntryRef.current = null;
       wakeLockRef.current?.release().catch(() => {});
       wakeLockRef.current = null;
     },
-    [projectPath, markDone]
+    [projectPath, markDone, reconnectToCommand]
   );
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
