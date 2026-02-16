@@ -1,6 +1,6 @@
 # Claude Code Mobile
 
-**v1.0.0**
+**v1.0.1**
 
 Access Claude Code from your phone. Full Claude Agent SDK with file browsing, chat, terminal, and real-time streaming — all through a mobile-friendly web interface.
 
@@ -291,6 +291,11 @@ lsof -ti :3020 | xargs kill
 - **Backend:** Express, Claude Agent SDK, TypeScript (tsx)
 - **Infrastructure:** Vercel, Cloudflare Tunnel
 - **Auth:** Google OAuth via NextAuth
+
+## Version History
+
+- **v1.0.1** — Improved README for public release: cross-platform setup (Mac/Linux/WSL), security considerations, troubleshooting guide, local dev instructions. Fixed localhost port fallback bug.
+- **v1.0.0** — Initial public release. Chat, file browser, terminal, permission modes, slash commands, MCP servers, context tracking.
 
 ## License
 
