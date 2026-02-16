@@ -1,4 +1,4 @@
-const TUNNEL_URL = process.env.TUNNEL_URL || "http://localhost:3002";
+const TUNNEL_URL = process.env.TUNNEL_URL || "http://localhost:3020";
 const SHARED_SECRET = process.env.SHARED_SECRET || "";
 
 export async function serverFetch(

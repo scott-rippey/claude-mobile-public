@@ -6,14 +6,15 @@ Access Claude Code from your phone. Full Claude Agent SDK with file browsing, ch
 
 ## Features
 
-- **Chat with Claude Code** — full Agent SDK with token-by-token streaming, tool call indicators, and activity feedback
+- **Chat with Claude Code** — full Agent SDK with token-by-token streaming, tool call indicators, and activity feedback (default model: `claude-opus-4-6`)
 - **File Browser** — browse, view, and navigate your project files
 - **Terminal** — execute commands on your server machine
-- **Permission Modes** — Default, Accept Edits, and Plan mode switchable mid-conversation
-- **Slash Commands** — built-in (`/help`, `/model`, `/status`, `/compact`) and custom `.md` commands
-- **MCP Servers** — loads your configured MCP servers from project/user settings
+- **Permission Modes** — Default, Accept Edits, and Plan mode switchable mid-conversation (60s timeout with 45s warning)
+- **Slash Commands** — built-in (`/help`, `/model`, `/status`, `/compact`, `/clear`) plus your existing custom `.md` commands
+- **MCP Servers** — loads your configured MCP servers from project/user settings, plus [Context7](https://github.com/upstash/context7) for up-to-date library docs
 - **Context Tracking** — live context usage bar with real-time token updates
 - **Mobile-First** — designed for phone screens with touch-friendly controls
+- **Session State** — in-memory per session (model, cost, context usage). Sessions expire after 24h and are lost on server restart.
 
 ## Architecture
 
@@ -27,13 +28,13 @@ Phone (browser)
 ```
 
 **You need two things:**
-1. **A server machine** (Mac, Linux, etc.) — runs cc-server and has access to your project files
+1. **A server machine** (Mac, Linux, Windows with WSL) — runs cc-server and has access to your project files
 2. **A Vercel deployment** — serves the frontend and authenticates users
 
 ## Prerequisites
 
 - **Node.js 18+** on both your dev machine and server
-- **Claude Code** — installed on the server machine (uses your Claude Max/Pro subscription)
+- **Claude Code** — installed on the server machine ([install guide](https://docs.anthropic.com/en/docs/claude-code/overview)). Requires a Claude Max or Pro subscription.
 - **Google Cloud account** — for OAuth (free)
 - **Cloudflare account** — for the tunnel (free tier works)
 - **A domain name** — for the Cloudflare tunnel endpoint
@@ -66,6 +67,7 @@ cd cc-server && npm install && cd ..
    - Click **Create**
 4. Go to **Google Auth Platform → Audience**
    - Under **Test users**, click **Add users** and add your email
+   - Note: While in testing mode, only these test users can sign in. To allow anyone, you'd need to verify your app with Google.
 5. Go to **Google Auth Platform → Clients**
    - Click **Create Client**
    - Application type: **Web application**
@@ -90,12 +92,29 @@ cd cc-server && npm install && cd ..
 
 On the machine that will run cc-server:
 
-```bash
-# Install cloudflared
-brew install cloudflared  # macOS
-# or see https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+#### Install cloudflared
 
-# Configure cc-server
+**macOS:**
+```bash
+brew install cloudflared
+```
+
+**Linux (Debian/Ubuntu):**
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+```
+
+**Windows (WSL):**
+```bash
+# Inside WSL, use the Linux instructions above
+```
+
+See the [cloudflared docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for other platforms.
+
+#### Configure cc-server
+
+```bash
 cp cc-server/.env.example cc-server/.env
 ```
 
@@ -107,14 +126,29 @@ PORT=3020
 TUNNEL_TOKEN=eyJ...your-cloudflare-tunnel-token
 ```
 
-Start the server:
+Generate a secure shared secret:
 ```bash
-# macOS: double-click Start CC Server.command
-# or manually:
+openssl rand -hex 32
+```
+
+#### Start the server
+
+**macOS (recommended):** Double-click `Start CC Server.command` — starts both the Cloudflare tunnel and cc-server with auto-restart on crash.
+
+**Any platform (manual):**
+```bash
+# Terminal 1: Start the tunnel
+cloudflared tunnel run --token YOUR_TUNNEL_TOKEN
+
+# Terminal 2: Start cc-server
 cd cc-server && npm run dev
 ```
 
-The `Start CC Server.command` launcher starts both the Cloudflare tunnel and cc-server with auto-restart on crash.
+#### Optional: Install tunnel as a system service (auto-starts on boot)
+
+```bash
+sudo cloudflared service install YOUR_TUNNEL_TOKEN
+```
 
 ### 5. Deploy to Vercel
 
@@ -136,7 +170,11 @@ The `Start CC Server.command` launcher starts both the Cloudflare tunnel and cc-
 ### 6. Test
 
 1. Start cc-server on your server machine
-2. Visit `https://your-tunnel-domain/health` — should return `{"status":"ok"}`
+2. Verify the tunnel:
+   ```bash
+   curl https://your-tunnel-domain/health
+   # Should return: {"status":"ok","timestamp":"..."}
+   ```
 3. Visit your Vercel URL — sign in with Google
 4. Browse files, open a project, start chatting
 
@@ -173,6 +211,8 @@ Switch modes using the selector above the chat input:
 - **Accept Edits** — auto-allows file edits, still prompts for bash
 - **Plan** — planning mode, no tool execution
 
+Permission requests timeout after 60 seconds (warning shown at 45s).
+
 ### Slash Commands
 
 | Command | Description |
@@ -185,18 +225,23 @@ Switch modes using the selector above the chat input:
 | `/compact` | Compact conversation to free context |
 | `/clear` | Clear conversation and start fresh |
 
-Custom `.md` commands from `.claude/commands/` are also supported.
+Custom `.md` commands from your `.claude/commands/` directories are also available — any slash commands you've set up on the server machine work here too.
 
 ## Development
 
 ### Local Development
 
 ```bash
-# Start Next.js dev server
-npm run dev
-
-# In another terminal, start cc-server
+# Terminal 1: Start cc-server
 cd cc-server && npm run dev
+
+# Terminal 2: Start Next.js dev server with env vars pointing to local cc-server
+TUNNEL_URL=http://localhost:3020 SHARED_SECRET=your-local-secret npm run dev
+```
+
+Or pull your Vercel env vars for local development:
+```bash
+vercel env pull .env.local  # Only for local dev — never commit this file
 ```
 
 ### Pre-Commit Checks
@@ -208,6 +253,37 @@ npx eslint .         # Lint check
 ```
 
 All three must pass before committing — every push triggers a Vercel deploy.
+
+## Security Considerations
+
+- **SHARED_SECRET** should be a cryptographically random string (use `openssl rand -hex 32`). This is the only thing protecting your server from unauthorized access.
+- **ALLOWED_EMAILS** restricts which Google accounts can sign in. Set this to only your own email(s).
+- **BASE_DIR** controls what files cc-server can access. Set this to a specific projects directory, not your entire home folder.
+- **Cloudflare Tunnel** encrypts all traffic between Vercel and your server — your server doesn't need to be directly exposed to the internet.
+- **Session state is in-memory** — restarting cc-server clears all sessions. No data is persisted to disk.
+
+## Troubleshooting
+
+**"Connection refused" or tunnel not working:**
+- Verify cc-server is running: `curl http://localhost:3020/health`
+- Verify the tunnel is running: check the cloudflared process
+- Verify the tunnel hostname points to `localhost:3020` in Cloudflare dashboard
+
+**Google sign-in fails:**
+- Check that your email is in the "Test users" list in Google Cloud Console
+- Verify `NEXTAUTH_URL` matches your actual Vercel domain exactly
+- Verify the redirect URI in Google Cloud Console matches `https://your-app.vercel.app/api/auth/callback/google`
+
+**Chat hangs or times out:**
+- SSE streams need long-lived connections. Some corporate firewalls may interfere.
+- The server sends heartbeat pings every 15s to keep connections alive through proxies.
+- Check cc-server logs for errors.
+
+**Port 3020 already in use:**
+```bash
+# Find and kill the process
+lsof -ti :3020 | xargs kill
+```
 
 ## Tech Stack
 
