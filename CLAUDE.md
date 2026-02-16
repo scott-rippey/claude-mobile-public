@@ -65,7 +65,7 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 ## Environment Variables
 
 ### Vercel (production)
-- `TUNNEL_URL` — Cloudflare Tunnel URL to iMac (`https://api.claudemobile.dev`)
+- `TUNNEL_URL` — Cloudflare Tunnel URL to your server (e.g. `https://api.yourdomain.com`)
 - `SHARED_SECRET` — shared auth token between Vercel and cc-server
 - `NEXTAUTH_SECRET` — NextAuth session encryption
 - `NEXTAUTH_URL` — Vercel app URL
