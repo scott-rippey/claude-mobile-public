@@ -1,6 +1,4 @@
 # Files to exclude when publishing to the public repo
 # Used by scripts/publish-public.sh
-docs/SESSION_LOG.md
-docs/IMPLEMENTATION_PLAN.md
-docs/troubleshooting
+docs
 .claude
