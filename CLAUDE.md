@@ -1,13 +1,13 @@
 # Claude Code Mobile
 
-Remote Claude Code interface — access Claude Agent SDK and your iMac's file system from your phone.
+Remote Claude Code interface — access Claude Agent SDK and your server's file system from your phone.
 
 ## Architecture
 
 ```
 Phone → Vercel (Next.js + Google Auth)
   → API proxy routes → Cloudflare Tunnel
-    → iMac Express server (cc-server, port 3020)
+    → Server machine (cc-server, port 3020)
       → Claude Agent SDK + file system access
 ```
 
@@ -16,24 +16,26 @@ Phone → Vercel (Next.js + Google Auth)
 - **NextAuth** with Google OAuth (only authorized users)
 - **API routes** (`app/api/`) proxy requests to cc-server through Cloudflare Tunnel
 - **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/file/chat/terminal/help)
-- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage, ClaudeLogo
+- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage, StatusBar, ClaudeLogo
 
-### Backend (`cc-server/` — runs on iMac only)
+### Backend (`cc-server/` — runs on your server machine)
 - **Express** server on port 3020
 - **Auth middleware** validates shared secret from Vercel API routes
-- **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/chat/abort`, `/api/chat/permission`, `/api/chat/mode`, `/api/terminal` (SSE streaming)
+- **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/chat/abort`, `/api/chat/permission`, `/api/chat/mode`, `/api/chat/status`, `/api/chat/reconnect` (SSE), `/api/terminal` (SSE streaming), `/api/terminal/status`, `/api/terminal/reconnect` (SSE)
 - **Claude Agent SDK** integration for chat with `settingSources: ["project", "user"]` and `includePartialMessages: true` for token-by-token streaming
 - **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
 - **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
 - **In-memory session state** tracks model, permissionMode, context tokens, context window, and cost per sessionId (lost on restart, 24h TTL with auto-cleanup)
 - **Permission modes** — Default/Accept Edits/Plan switchable mid-session via UI selector; maps directly to SDK `permissionMode` values
 - **SSE heartbeats** — both chat and terminal streams send keepalive pings every 15s to prevent proxy/tunnel timeouts
+- **QueryRunner** (`cc-server/src/query-runner.ts`) — decouples query execution from SSE connection lifetime; buffers events with sequential indices, supports listener subscribe/unsubscribe, replay-from-index for reconnection, 2000-event cap with FIFO eviction, 5min TTL cleanup for completed runners
+- **TerminalRunner** — same pattern for terminal commands; process survives client disconnect, orphaned processes auto-killed after 30min
 - **Permission timeout** — 60s with 45s warning event (mobile users respond quickly or not at all)
 - **Command priority:** built-in → custom .md → pass-through to SDK (covers `/compact` and skills like `/commit`)
 - Runs TypeScript directly via `tsx` — no build/compile step needed
 - `Start CC Server.command` starts both Cloudflare tunnel and server with auto-restart
 - `Start CC Server Local.command` starts server only (no tunnel) for local testing
-- NOT deployed to Vercel — this subfolder runs locally on the iMac
+- NOT deployed to Vercel — this subfolder runs on your server machine (Mac, Linux, or WSL on Windows)
 - Has its own `package.json`, `tsconfig.json`, and `node_modules`
 
 ### Key Files
@@ -72,7 +74,7 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 - `GOOGLE_CLIENT_ID` — Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET` — Google OAuth client secret
 
-### cc-server (.env on iMac)
+### cc-server (.env on server machine)
 - `SHARED_SECRET` — must match Vercel's value
 - `BASE_DIR` — root directory for file browsing and terminal (e.g. `/path/to/your/projects`)
 - `PORT` — defaults to 3020
