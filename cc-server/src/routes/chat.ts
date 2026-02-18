@@ -33,6 +33,7 @@ const DEFAULT_MODEL = "claude-opus-4-6";
 // ── Active query tracking (for abort + mode changes) ────────────────
 const activeAborts = new Map<string, AbortController>();
 const activeQueries = new Map<string, Query>(); // sessionId → active query (for setPermissionMode / interrupt)
+const lastCompletedQueries = new Map<string, Query>(); // sessionId → last finished query (for rewindFiles)
 
 // ── Pending permission requests ─────────────────────────────────────
 interface PendingPermission {
@@ -278,6 +279,7 @@ async function handleClear(ctx: CommandContext) {
   // Delete session state from memory and disk
   if (ctx.sessionId) {
     deleteSession(ctx.sessionId);
+    lastCompletedQueries.delete(ctx.sessionId);
     console.error(`[chat] cleared session state for ${ctx.sessionId}`);
   }
   ctx.sendEvent("assistant", { text: "Session cleared." });
@@ -418,7 +420,11 @@ router.post("/", async (req, res) => {
   // Clean up abort + pending permissions for this query (called when query ends)
   const cleanupQuery = () => {
     activeAborts.delete(queryId);
-    if (resultSessionId) activeQueries.delete(resultSessionId);
+    if (resultSessionId) {
+      const finishedQuery = activeQueries.get(resultSessionId);
+      activeQueries.delete(resultSessionId);
+      if (finishedQuery) lastCompletedQueries.set(resultSessionId, finishedQuery);
+    }
     // Deny all pending permissions for this query
     for (const [reqId, pending] of pendingPermissions) {
       if (reqId.startsWith(queryId)) {
@@ -997,54 +1003,20 @@ router.post("/rewind", async (req, res) => {
   const targetUuid = checkpoints[idx];
   console.error(`[chat] rewinding session ${sessionId} to checkpoint ${idx} (uuid=${targetUuid})`);
 
-  // Get the active Query object for this session
-  const activeQuery = activeQueries.get(sessionId);
+  // Use active query if one is running, otherwise fall back to the last completed query
+  const queryObj = activeQueries.get(sessionId) ?? lastCompletedQueries.get(sessionId);
 
-  if (!activeQuery) {
-    // No active query — create a temporary one to call rewindFiles
-    try {
-      const baseDir = process.env.BASE_DIR!;
-      // We need a cwd for the query — derive from init data if available
-      const cwd = session.lastInit?.cwd ?? baseDir;
-
-      const tempResponse = query({
-        prompt: "",
-        options: {
-          cwd,
-          resume: sessionId,
-          systemPrompt: { type: "preset" as const, preset: "claude_code" as const },
-          permissionMode: session.permissionMode,
-          model: session.model,
-        },
-      });
-
-      if (typeof (tempResponse as any).rewindFiles === "function") {
-        await (tempResponse as any).rewindFiles(targetUuid);
-        console.error(`[chat] rewind complete for session ${sessionId}`);
-
-        // Truncate checkpoints up to and including the rewind target
-        session.checkpoints = checkpoints.slice(0, idx);
-        saveSession(sessionId, session);
-
-        res.json({ ok: true, checkpointIndex: idx, uuid: targetUuid, remainingCheckpoints: session.checkpoints.length });
-      } else {
-        res.status(501).json({ error: "rewindFiles not supported by SDK version" });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[chat] rewind error: ${msg}`);
-      res.status(500).json({ error: msg });
-    }
+  if (!queryObj) {
+    res.status(400).json({ error: "No query available for this session — send a message first" });
     return;
   }
 
-  // Active query exists — call rewindFiles on it
   try {
-    if (typeof (activeQuery as any).rewindFiles === "function") {
-      await (activeQuery as any).rewindFiles(targetUuid);
-      console.error(`[chat] rewind complete for active session ${sessionId}`);
+    if (typeof (queryObj as any).rewindFiles === "function") {
+      await (queryObj as any).rewindFiles(targetUuid);
+      console.error(`[chat] rewind complete for session ${sessionId}`);
 
-      // Truncate checkpoints
+      // Truncate checkpoints up to (but not including) the rewind target
       session.checkpoints = checkpoints.slice(0, idx);
       saveSession(sessionId, session);
 
@@ -1065,6 +1037,7 @@ export function getChatStats() {
     sessions: getSessionCount(),
     activeAborts: activeAborts.size,
     activeQueries: activeQueries.size,
+    lastCompletedQueries: lastCompletedQueries.size,
     pendingPermissions: pendingPermissions.size,
     ...getRunnerStats(),
   };
