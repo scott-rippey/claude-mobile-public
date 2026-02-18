@@ -54,9 +54,10 @@ function getConnectionLabel(state: ConnectionState): string | null {
 interface StatusBarProps {
   activityState: ActivityState;
   connectionState: ConnectionState;
+  isInterrupting?: boolean;
 }
 
-export function StatusBar({ activityState, connectionState }: StatusBarProps) {
+export function StatusBar({ activityState, connectionState, isInterrupting = false }: StatusBarProps) {
   // Elapsed time counter
   const [elapsed, setElapsed] = useState(0);
 
@@ -70,13 +71,13 @@ export function StatusBar({ activityState, connectionState }: StatusBarProps) {
   }, [activityState]);
 
   const connectionLabel = getConnectionLabel(connectionState);
-  const activityLabel = getActivityLabel(activityState);
+  const activityLabel = isInterrupting ? "Interrupting..." : getActivityLabel(activityState);
   const elapsedStr = elapsed > 0 ? ` (${elapsed}s)` : "";
 
   return (
     <div className="flex items-center gap-2 px-4 py-1.5 text-xs">
       <ConnectionDot state={connectionState} />
-      <span className={`truncate ${connectionState === "disconnected" ? "text-red-400" : connectionState === "reconnecting" ? "text-blue-400" : connectionState === "stale" ? "text-amber-400" : "text-muted"}`}>
+      <span className={`truncate ${connectionState === "disconnected" ? "text-red-400" : connectionState === "reconnecting" ? "text-blue-400" : connectionState === "stale" ? "text-amber-400" : isInterrupting ? "text-amber-400" : "text-muted"}`}>
         {connectionLabel || activityLabel}{elapsedStr}
       </span>
     </div>

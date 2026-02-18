@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, Square, WifiOff } from "lucide-react";
+import { Send, Plus, Square, WifiOff, RotateCcw } from "lucide-react";
 import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { PermissionModal } from "./PermissionModal";
@@ -139,6 +139,15 @@ export function ChatInterface({
   const [connectionState, setConnectionState] = useState<ConnectionState>("connected");
   const lastEventTimeRef = useRef<number>(0);
   const healthCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Feature B: Graceful interrupt state ──────────────────────────
+  // First stop tap = graceful interrupt ("Interrupting..." state)
+  // Second tap within 3s = hard abort
+  const [isInterrupting, setIsInterrupting] = useState(false);
+  const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Feature C: Checkpoint / rewind state ─────────────────────────
+  const [checkpointCount, setCheckpointCount] = useState(0);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -356,6 +365,11 @@ export function ChatInterface({
         if (sid) {
           setSessionId(sid);
           localStorage.setItem(`cc-session-${projectPath}`, sid);
+        }
+        // Feature C: track checkpoint count from result events
+        const checkpoints = event.data.checkpoints as string[] | undefined;
+        if (checkpoints !== undefined) {
+          setCheckpointCount(checkpoints.length);
         }
         break;
       }
@@ -722,20 +736,67 @@ export function ChatInterface({
     setSessionStats(null);
     setPermissionQueue([]);
     setChatMode("default");
+    setCheckpointCount(0);
+    setIsInterrupting(false);
+    if (interruptTimerRef.current) {
+      clearTimeout(interruptTimerRef.current);
+      interruptTimerRef.current = null;
+    }
     lastEventIndexRef.current = -1;
     localStorage.removeItem(`cc-session-${projectPath}`);
     localStorage.removeItem(`${CHAT_STORAGE_PREFIX}${projectPath}`);
   };
 
   const stopQuery = () => {
-    abortRef.current?.abort();
     const qId = queryIdRef.current;
-    if (qId) {
-      fetch("/api/chat/abort", {
+
+    if (!isInterrupting) {
+      // First tap: graceful interrupt
+      setIsInterrupting(true);
+      if (qId) {
+        fetch("/api/chat/abort", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ queryId: qId, graceful: true }),
+        }).catch(() => {});
+      }
+      // Reset after 3s — next tap becomes hard abort
+      interruptTimerRef.current = setTimeout(() => {
+        setIsInterrupting(false);
+        interruptTimerRef.current = null;
+      }, 3000);
+    } else {
+      // Second tap within 3s: hard abort
+      if (interruptTimerRef.current) {
+        clearTimeout(interruptTimerRef.current);
+        interruptTimerRef.current = null;
+      }
+      setIsInterrupting(false);
+      abortRef.current?.abort();
+      if (qId) {
+        fetch("/api/chat/abort", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ queryId: qId, graceful: false }),
+        }).catch(() => {});
+      }
+    }
+  };
+
+  // Feature C: rewind files to last checkpoint
+  const rewindFiles = async () => {
+    const sid = sessionId;
+    if (!sid || checkpointCount === 0) return;
+    try {
+      await fetch("/api/chat/rewind", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ queryId: qId }),
-      }).catch(() => {});
+        body: JSON.stringify({ sessionId: sid }),
+      });
+      // Decrement checkpoint count (server will confirm new count on next result)
+      setCheckpointCount((prev) => Math.max(0, prev - 1));
+    } catch {
+      // Rewind failed silently — server logs the error
     }
   };
 
@@ -824,13 +885,26 @@ export function ChatInterface({
             <h1 className="text-sm font-semibold truncate">{projectName}</h1>
             <p className="text-xs text-muted truncate">Claude Code</p>
           </div>
-          <button
-            onClick={startNewConversation}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors shrink-0"
-          >
-            <Plus size={14} />
-            New
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Feature C: Undo button — visible when checkpoints exist and not streaming */}
+            {checkpointCount > 0 && !isStreaming && (
+              <button
+                onClick={rewindFiles}
+                title={`Undo last change (${checkpointCount} checkpoint${checkpointCount !== 1 ? "s" : ""})`}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-500 hover:text-amber-400 border border-amber-500/30 rounded-md hover:bg-amber-500/10 transition-colors"
+              >
+                <RotateCcw size={14} />
+                Undo
+              </button>
+            )}
+            <button
+              onClick={startNewConversation}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors"
+            >
+              <Plus size={14} />
+              New
+            </button>
+          </div>
         </header>
       )}
 
@@ -921,6 +995,7 @@ export function ChatInterface({
           <StatusBar
             activityState={activityState}
             connectionState={connectionState}
+            isInterrupting={isInterrupting}
           />
         )}
 
@@ -947,7 +1022,8 @@ export function ChatInterface({
           {isStreaming ? (
             <button
               onClick={stopQuery}
-              className="flex items-center justify-center w-10 h-10 bg-red-600 rounded-xl text-white hover:bg-red-500 active:bg-red-700 transition-colors shrink-0"
+              title={isInterrupting ? "Tap again to force stop" : "Stop (tap twice to force)"}
+              className={`flex items-center justify-center w-10 h-10 rounded-xl text-white transition-colors shrink-0 ${isInterrupting ? "bg-amber-600 hover:bg-amber-500 active:bg-amber-700" : "bg-red-600 hover:bg-red-500 active:bg-red-700"}`}
             >
               <Square size={16} fill="currentColor" />
             </button>
