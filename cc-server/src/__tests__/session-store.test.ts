@@ -1,41 +1,27 @@
 /**
  * Tests for session-store.ts — Feature A: Session Persistence
- *
- * Uses Node's built-in test runner (node:test) with tsx.
  */
 
-import { test, describe, before, after, beforeEach } from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import fsPromises from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
-
-// We need to patch the DATA_DIR before importing session-store,
-// so we use a temp directory and dynamic import.
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fsPromises from "fs/promises";
+import path from "path";
+import os from "os";
 
 let tmpDir: string;
 let SESSIONS_FILE: string;
 
-// We need to use module isolation — re-import with patched env each time.
-// Since session-store reads import.meta.url at module load time, we stub with
-// a fresh temp dir per test suite.
-
-describe("session-store", async () => {
-  // Create a temp dir and override the sessions file path via env var
-  before(async () => {
+describe("session-store", () => {
+  beforeAll(async () => {
     tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "cc-session-test-"));
     SESSIONS_FILE = path.join(tmpDir, "sessions.json");
   });
 
-  after(async () => {
-    // Clean up temp dir
+  afterAll(async () => {
     await fsPromises.rm(tmpDir, { recursive: true, force: true });
   });
 
-  // Test the pure logic functions independently (without disk I/O module state)
   describe("SessionState defaults", () => {
-    test("new session has expected defaults", () => {
+    it("new session has expected defaults", () => {
       const state = {
         model: "claude-opus-4-6",
         permissionMode: "default" as const,
@@ -46,16 +32,16 @@ describe("session-store", async () => {
         lastActivity: Date.now(),
       };
 
-      assert.equal(state.model, "claude-opus-4-6");
-      assert.equal(state.permissionMode, "default");
-      assert.equal(state.totalCostUsd, 0);
-      assert.equal(state.messageCount, 0);
-      assert.equal(state.contextTokens, 0);
-      assert.equal(state.contextWindow, 0);
-      assert.ok(state.lastActivity <= Date.now());
+      expect(state.model).toBe("claude-opus-4-6");
+      expect(state.permissionMode).toBe("default");
+      expect(state.totalCostUsd).toBe(0);
+      expect(state.messageCount).toBe(0);
+      expect(state.contextTokens).toBe(0);
+      expect(state.contextWindow).toBe(0);
+      expect(state.lastActivity).toBeLessThanOrEqual(Date.now());
     });
 
-    test("checkpoints field is optional", () => {
+    it("checkpoints field is optional", () => {
       const state: {
         model: string;
         permissionMode: "default" | "acceptEdits" | "plan";
@@ -75,13 +61,12 @@ describe("session-store", async () => {
         lastActivity: Date.now(),
       };
 
-      assert.equal(state.checkpoints, undefined);
+      expect(state.checkpoints).toBeUndefined();
     });
   });
 
   describe("JSON persistence format", () => {
-    test("sessions JSON excludes ephemeral fields", async () => {
-      // Simulate what flushToDisk does — write sessions without supportedModels/lastInit
+    it("sessions JSON excludes ephemeral fields", () => {
       const session = {
         model: "claude-opus-4-6",
         permissionMode: "default" as const,
@@ -110,16 +95,15 @@ describe("session-store", async () => {
       const parsed = JSON.parse(json) as Record<string, typeof persisted>;
 
       const s = parsed["test-session"];
-      assert.ok(!("supportedModels" in s), "supportedModels should not be persisted");
-      assert.ok(!("lastInit" in s), "lastInit should not be persisted");
-      assert.equal(s.model, "claude-opus-4-6");
-      assert.equal(s.totalCostUsd, 1.5);
-      assert.equal(s.messageCount, 5);
-      assert.deepEqual(s.checkpoints, ["uuid-1", "uuid-2"]);
+      expect("supportedModels" in s).toBe(false);
+      expect("lastInit" in s).toBe(false);
+      expect(s.model).toBe("claude-opus-4-6");
+      expect(s.totalCostUsd).toBe(1.5);
+      expect(s.messageCount).toBe(5);
+      expect(s.checkpoints).toEqual(["uuid-1", "uuid-2"]);
     });
 
-    test("disk write uses atomic rename (tmp file)", async () => {
-      // Write a fake sessions file via temp file pattern
+    it("disk write uses atomic rename (tmp file)", async () => {
       const data = JSON.stringify({ "sess-1": { model: "claude-opus-4-6", permissionMode: "default", totalCostUsd: 0, messageCount: 0, contextTokens: 0, contextWindow: 0, lastActivity: Date.now() } }, null, 2);
       const tmpFile = SESSIONS_FILE + ".tmp";
 
@@ -129,17 +113,17 @@ describe("session-store", async () => {
 
       // .tmp file should be gone
       const tmpExists = await fsPromises.access(tmpFile).then(() => true).catch(() => false);
-      assert.equal(tmpExists, false, "tmp file should be cleaned up after rename");
+      expect(tmpExists).toBe(false);
 
       // Real file should exist
       const realExists = await fsPromises.access(SESSIONS_FILE).then(() => true).catch(() => false);
-      assert.equal(realExists, true, "sessions file should exist");
+      expect(realExists).toBe(true);
 
       const content = JSON.parse(await fsPromises.readFile(SESSIONS_FILE, "utf-8")) as Record<string, unknown>;
-      assert.ok("sess-1" in content, "session should be in file");
+      expect("sess-1" in content).toBe(true);
     });
 
-    test("expired sessions are filtered on load", () => {
+    it("expired sessions are filtered on load", () => {
       const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
       const now = Date.now();
       const sessions = [
@@ -149,20 +133,20 @@ describe("session-store", async () => {
       ];
 
       const alive = sessions.filter(s => now - s.lastActivity <= SESSION_TTL_MS);
-      assert.equal(alive.length, 2);
-      assert.ok(alive.some(s => s.id === "fresh"));
-      assert.ok(alive.some(s => s.id === "borderline"));
-      assert.ok(!alive.some(s => s.id === "expired"));
+      expect(alive.length).toBe(2);
+      expect(alive.some(s => s.id === "fresh")).toBe(true);
+      expect(alive.some(s => s.id === "borderline")).toBe(true);
+      expect(alive.some(s => s.id === "expired")).toBe(false);
     });
   });
 
   describe("TTL cleanup logic", () => {
-    test("24h TTL is correctly calculated", () => {
+    it("24h TTL is correctly calculated", () => {
       const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-      assert.equal(SESSION_TTL_MS, 86_400_000);
+      expect(SESSION_TTL_MS).toBe(86_400_000);
     });
 
-    test("sessions map is cleaned of stale entries", () => {
+    it("sessions map is cleaned of stale entries", () => {
       const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
       const sessions = new Map<string, { lastActivity: number }>();
       const now = Date.now();
@@ -178,48 +162,48 @@ describe("session-store", async () => {
         }
       }
 
-      assert.equal(cleaned, 1);
-      assert.equal(sessions.size, 1);
-      assert.ok(sessions.has("active"));
+      expect(cleaned).toBe(1);
+      expect(sessions.size).toBe(1);
+      expect(sessions.has("active")).toBe(true);
     });
   });
 
   describe("checkpoint tracking", () => {
-    test("checkpoints array is appended per result message", () => {
+    it("checkpoints array is appended per result message", () => {
       const checkpoints: string[] = [];
       const uuid1 = "msg-uuid-1";
       const uuid2 = "msg-uuid-2";
 
       checkpoints.push(uuid1);
-      assert.equal(checkpoints.length, 1);
+      expect(checkpoints.length).toBe(1);
 
       checkpoints.push(uuid2);
-      assert.equal(checkpoints.length, 2);
-      assert.deepEqual(checkpoints, [uuid1, uuid2]);
+      expect(checkpoints.length).toBe(2);
+      expect(checkpoints).toEqual([uuid1, uuid2]);
     });
 
-    test("rewind truncates checkpoints after target index", () => {
+    it("rewind truncates checkpoints after target index", () => {
       const checkpoints = ["uuid-0", "uuid-1", "uuid-2", "uuid-3"];
       const rewindToIndex = 2; // rewind to checkpoint at index 2
 
       // After rewind to index 2, checkpoints 0..1 remain
       const remaining = checkpoints.slice(0, rewindToIndex);
-      assert.deepEqual(remaining, ["uuid-0", "uuid-1"]);
+      expect(remaining).toEqual(["uuid-0", "uuid-1"]);
     });
 
-    test("rewind to last checkpoint by default", () => {
+    it("rewind to last checkpoint by default", () => {
       const checkpoints = ["uuid-0", "uuid-1", "uuid-2"];
       const idx = checkpoints.length - 1; // last
       const target = checkpoints[idx];
 
-      assert.equal(target, "uuid-2");
+      expect(target).toBe("uuid-2");
       const remaining = checkpoints.slice(0, idx);
-      assert.deepEqual(remaining, ["uuid-0", "uuid-1"]);
+      expect(remaining).toEqual(["uuid-0", "uuid-1"]);
     });
 
-    test("empty checkpoints array returns no-op", () => {
+    it("empty checkpoints array returns no-op", () => {
       const checkpoints: string[] = [];
-      assert.equal(checkpoints.length, 0);
+      expect(checkpoints.length).toBe(0);
       // Should be handled as "no checkpoints available"
     });
   });

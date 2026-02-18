@@ -1,90 +1,10 @@
 import { Router } from "express";
-import { spawn, type ChildProcess } from "child_process";
+import { spawn } from "child_process";
 import path from "path";
 import crypto from "crypto";
+import { TerminalRunner, type TerminalEventListener } from "../terminal-runner.js";
 
 const router = Router();
-
-// ── TerminalRunner — manages command lifecycle independently from SSE ──
-
-interface IndexedTerminalEvent {
-  index: number;
-  type: string;
-  data: unknown;
-}
-
-type TerminalEventListener = (event: IndexedTerminalEvent) => void;
-
-class TerminalRunner {
-  readonly commandId: string;
-  readonly command: string;
-
-  private eventBuffer: IndexedTerminalEvent[] = [];
-  private nextIndex = 0;
-  private listeners = new Set<TerminalEventListener>();
-  private _status: "running" | "completed" | "error" = "running";
-  private _exitCode: number | null = null;
-  private _child: ChildProcess | null = null;
-  private createdAt = Date.now();
-
-  constructor(commandId: string, command: string) {
-    this.commandId = commandId;
-    this.command = command;
-  }
-
-  get status() { return this._status; }
-  get exitCode() { return this._exitCode; }
-  get eventCount() { return this.nextIndex; }
-  get firstBufferedIndex() {
-    return this.eventBuffer.length > 0 ? this.eventBuffer[0].index : this.nextIndex;
-  }
-  get listenerCount() { return this.listeners.size; }
-  get age() { return Date.now() - this.createdAt; }
-
-  setChild(child: ChildProcess) { this._child = child; }
-
-  bufferEvent(type: string, data: unknown): IndexedTerminalEvent {
-    const event: IndexedTerminalEvent = { index: this.nextIndex++, type, data };
-    this.eventBuffer.push(event);
-    // Cap buffer at 1000 for terminal (less than chat's 2000)
-    while (this.eventBuffer.length > 1000) {
-      this.eventBuffer.shift();
-    }
-    for (const listener of this.listeners) {
-      try { listener(event); } catch { this.listeners.delete(listener); }
-    }
-    return event;
-  }
-
-  addListener(fn: TerminalEventListener) { this.listeners.add(fn); }
-  removeListener(fn: TerminalEventListener) { this.listeners.delete(fn); }
-
-  replayFrom(fromIndex: number): { events: IndexedTerminalEvent[]; gap: boolean } {
-    if (this.eventBuffer.length === 0) {
-      return { events: [], gap: fromIndex < this.nextIndex };
-    }
-    const firstAvailable = this.eventBuffer[0].index;
-    const gap = fromIndex < firstAvailable;
-    const startFrom = Math.max(fromIndex, firstAvailable);
-    const bufferOffset = startFrom - firstAvailable;
-    return { events: this.eventBuffer.slice(bufferOffset), gap };
-  }
-
-  complete(exitCode: number) {
-    this._status = "completed";
-    this._exitCode = exitCode;
-  }
-
-  fail() {
-    this._status = "error";
-  }
-
-  kill() {
-    if (this._child && !this._child.killed) {
-      this._child.kill("SIGTERM");
-    }
-  }
-}
 
 // ── Registry ─────────────────────────────────────────────────────────
 
@@ -151,7 +71,7 @@ function subscribeTerminalResponse(
 }
 
 // POST /api/terminal — execute a command, stream output as SSE
-router.post("/", (req, res) => {
+export function handleTerminalPost(req: import("express").Request, res: import("express").Response) {
   const baseDir = process.env.BASE_DIR;
   console.error("[terminal] POST /api/terminal — body:", JSON.stringify(req.body));
   console.error("[terminal] BASE_DIR:", baseDir);
@@ -243,10 +163,12 @@ router.post("/", (req, res) => {
     clearInterval(heartbeat);
     runner.removeListener(listener);
   });
-});
+}
+
+router.post("/", handleTerminalPost);
 
 // GET /api/terminal/status — check if a command is still running
-router.get("/status", (req, res) => {
+export function handleTerminalStatus(req: import("express").Request, res: import("express").Response) {
   const commandId = req.query.commandId as string | undefined;
   if (!commandId) {
     res.status(400).json({ error: "commandId is required" });
@@ -266,10 +188,12 @@ router.get("/status", (req, res) => {
     status: runner.status,
     exitCode: runner.exitCode,
   });
-});
+}
+
+router.get("/status", handleTerminalStatus);
 
 // POST /api/terminal/reconnect — replay + subscribe to running command
-router.post("/reconnect", (req, res) => {
+export function handleTerminalReconnect(req: import("express").Request, res: import("express").Response) {
   const { commandId, fromIndex } = req.body as { commandId?: string; fromIndex?: number };
 
   if (!commandId) {
@@ -326,6 +250,8 @@ router.post("/reconnect", (req, res) => {
     clearInterval(heartbeat);
     runner.removeListener(listener);
   });
-});
+}
+
+router.post("/reconnect", handleTerminalReconnect);
 
 export default router;

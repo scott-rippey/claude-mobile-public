@@ -45,7 +45,7 @@ const BINARY_EXTENSIONS = new Set([
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
 
 // GET /api/file?path=relative/path/to/file
-router.get("/", async (req, res) => {
+export async function handleReadFile(req: import("express").Request, res: import("express").Response) {
   const baseDir = process.env.BASE_DIR!;
   const relativePath = req.query.path as string;
 
@@ -87,6 +87,8 @@ router.get("/", async (req, res) => {
       res.status(500).json({ error: message });
     }
   }
-});
+}
+
+router.get("/", handleReadFile);
 
 export default router;

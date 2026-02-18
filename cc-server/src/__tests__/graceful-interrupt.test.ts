@@ -4,31 +4,30 @@
  * Tests the abort endpoint logic and client-side double-tap behavior.
  */
 
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "vitest";
 
 describe("graceful-interrupt", () => {
   describe("abort endpoint request body", () => {
-    test("abort body with graceful=true is typed correctly", () => {
+    it("abort body with graceful=true is typed correctly", () => {
       const body = { queryId: "test-query-id", graceful: true };
-      assert.equal(body.graceful, true);
-      assert.equal(body.queryId, "test-query-id");
+      expect(body.graceful).toBe(true);
+      expect(body.queryId).toBe("test-query-id");
     });
 
-    test("abort body with graceful=false triggers hard abort", () => {
+    it("abort body with graceful=false triggers hard abort", () => {
       const body = { queryId: "test-query-id", graceful: false };
-      assert.equal(body.graceful, false);
+      expect(body.graceful).toBe(false);
     });
 
-    test("abort body without graceful defaults to false (hard abort)", () => {
+    it("abort body without graceful defaults to false (hard abort)", () => {
       const body: { queryId: string; graceful?: boolean } = { queryId: "test-query-id" };
       const graceful = body.graceful ?? false;
-      assert.equal(graceful, false);
+      expect(graceful).toBe(false);
     });
   });
 
   describe("double-tap interrupt state machine", () => {
-    test("first tap triggers graceful interrupt", () => {
+    it("first tap triggers graceful interrupt", () => {
       let isInterrupting = false;
       let graceful = false;
 
@@ -44,11 +43,11 @@ describe("graceful-interrupt", () => {
       };
 
       stopQuery();
-      assert.equal(isInterrupting, true);
-      assert.equal(graceful, true);
+      expect(isInterrupting).toBe(true);
+      expect(graceful).toBe(true);
     });
 
-    test("second tap within 3s triggers hard abort", () => {
+    it("second tap within 3s triggers hard abort", () => {
       let isInterrupting = true; // simulating first tap already done
 
       const stopQuery = () => {
@@ -61,10 +60,10 @@ describe("graceful-interrupt", () => {
       };
 
       stopQuery();
-      assert.equal(isInterrupting, false);
+      expect(isInterrupting).toBe(false);
     });
 
-    test("timer reset after 3s resets isInterrupting to false", () => {
+    it("timer reset after 3s resets isInterrupting to false", () => {
       let isInterrupting = true;
 
       // Simulate timer expiry
@@ -73,52 +72,52 @@ describe("graceful-interrupt", () => {
       };
       timerCallback();
 
-      assert.equal(isInterrupting, false);
+      expect(isInterrupting).toBe(false);
     });
 
-    test("interrupt state resets when streaming stops", () => {
+    it("interrupt state resets when streaming stops", () => {
       let isInterrupting = true;
-      let isStreaming = false;
+      const isStreaming = false;
 
       // When streaming ends, isInterrupting should be reset
       if (!isStreaming) {
         isInterrupting = false;
       }
 
-      assert.equal(isInterrupting, false);
+      expect(isInterrupting).toBe(false);
     });
   });
 
   describe("abort response methods", () => {
-    test("graceful interrupt returns method=interrupt", () => {
+    it("graceful interrupt returns method=interrupt", () => {
       const response = { ok: true, method: "interrupt" };
-      assert.equal(response.ok, true);
-      assert.equal(response.method, "interrupt");
+      expect(response.ok).toBe(true);
+      expect(response.method).toBe("interrupt");
     });
 
-    test("hard abort via controller returns method=abort", () => {
+    it("hard abort via controller returns method=abort", () => {
       const response = { ok: true, method: "abort" };
-      assert.equal(response.ok, true);
-      assert.equal(response.method, "abort");
+      expect(response.ok).toBe(true);
+      expect(response.method).toBe("abort");
     });
 
-    test("runner fallback abort returns method=runner-abort", () => {
+    it("runner fallback abort returns method=runner-abort", () => {
       const response = { ok: true, method: "runner-abort" };
-      assert.equal(response.ok, true);
-      assert.equal(response.method, "runner-abort");
+      expect(response.ok).toBe(true);
+      expect(response.method).toBe("runner-abort");
     });
 
-    test("not-found returns 404-like error", () => {
+    it("not-found returns 404-like error", () => {
       const response = { error: "Query not found or already finished" };
-      assert.ok("error" in response);
+      expect("error" in response).toBe(true);
     });
   });
 
   describe("graceful fallback to hard abort", () => {
-    test("interrupt() not available → falls through to hard abort", () => {
+    it("interrupt() not available — falls through to hard abort", () => {
       const mockQuery = {}; // no interrupt() method
       const hasInterrupt = typeof (mockQuery as any).interrupt === "function";
-      assert.equal(hasInterrupt, false);
+      expect(hasInterrupt).toBe(false);
 
       // Should use AbortController as fallback
       let aborted = false;
@@ -129,10 +128,10 @@ describe("graceful-interrupt", () => {
         controller.abort();
       }
 
-      assert.equal(aborted, true);
+      expect(aborted).toBe(true);
     });
 
-    test("interrupt() throws → falls through to hard abort", async () => {
+    it("interrupt() throws — falls through to hard abort", async () => {
       const mockQuery = {
         interrupt: async () => { throw new Error("interrupt failed"); },
       };
@@ -150,8 +149,8 @@ describe("graceful-interrupt", () => {
         controller.abort();
       }
 
-      assert.equal(usedHardAbort, true);
-      assert.equal(aborted, true);
+      expect(usedHardAbort).toBe(true);
+      expect(aborted).toBe(true);
     });
   });
 });

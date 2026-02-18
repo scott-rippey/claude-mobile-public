@@ -4,13 +4,11 @@
  * Tests checkpoint tracking, rewind logic, and endpoint behavior.
  */
 
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "vitest";
 
 describe("checkpointing", () => {
   describe("enableFileCheckpointing option", () => {
-    test("query options include enableFileCheckpointing: true", () => {
-      // Verify the option shape is correct
+    it("query options include enableFileCheckpointing: true", () => {
       const options = {
         cwd: "/some/project",
         permissionMode: "default" as const,
@@ -18,12 +16,12 @@ describe("checkpointing", () => {
         enableFileCheckpointing: true,
       };
 
-      assert.equal(options.enableFileCheckpointing, true);
+      expect(options.enableFileCheckpointing).toBe(true);
     });
   });
 
   describe("user_message_uuid capture", () => {
-    test("uuid is captured from result event", () => {
+    it("uuid is captured from result event", () => {
       const checkpoints: string[] = [];
       const resultEvent = {
         session_id: "sess-abc",
@@ -36,10 +34,10 @@ describe("checkpointing", () => {
         checkpoints.push(resultEvent.user_message_uuid);
       }
 
-      assert.deepEqual(checkpoints, ["uuid-123-456"]);
+      expect(checkpoints).toEqual(["uuid-123-456"]);
     });
 
-    test("uuid is not captured when missing from result", () => {
+    it("uuid is not captured when missing from result", () => {
       const checkpoints: string[] = [];
       const resultEvent = {
         session_id: "sess-abc",
@@ -51,10 +49,10 @@ describe("checkpointing", () => {
         checkpoints.push((resultEvent as any).user_message_uuid);
       }
 
-      assert.deepEqual(checkpoints, []);
+      expect(checkpoints).toEqual([]);
     });
 
-    test("multiple results accumulate checkpoints", () => {
+    it("multiple results accumulate checkpoints", () => {
       const checkpoints: string[] = [];
       const results = [
         { session_id: "sess-1", user_message_uuid: "uuid-1" },
@@ -68,84 +66,84 @@ describe("checkpointing", () => {
         }
       }
 
-      assert.equal(checkpoints.length, 3);
-      assert.deepEqual(checkpoints, ["uuid-1", "uuid-2", "uuid-3"]);
+      expect(checkpoints.length).toBe(3);
+      expect(checkpoints).toEqual(["uuid-1", "uuid-2", "uuid-3"]);
     });
   });
 
   describe("rewind endpoint validation", () => {
-    test("sessionId is required", () => {
+    it("sessionId is required", () => {
       const body: Record<string, unknown> = {};
       const sessionId = body.sessionId as string | undefined;
-      assert.equal(sessionId, undefined);
+      expect(sessionId).toBeUndefined();
       // Should return 400
     });
 
-    test("empty checkpoints array returns error", () => {
+    it("empty checkpoints array returns error", () => {
       const checkpoints: string[] = [];
       const hasCheckpoints = checkpoints.length > 0;
-      assert.equal(hasCheckpoints, false);
+      expect(hasCheckpoints).toBe(false);
       // Should return 400: "No checkpoints available"
     });
 
-    test("default checkpointIndex is last element", () => {
+    it("default checkpointIndex is last element", () => {
       const checkpoints = ["uuid-0", "uuid-1", "uuid-2"];
       const checkpointIndex = undefined;
       const idx = typeof checkpointIndex === "number" ? checkpointIndex : checkpoints.length - 1;
-      assert.equal(idx, 2);
-      assert.equal(checkpoints[idx], "uuid-2");
+      expect(idx).toBe(2);
+      expect(checkpoints[idx]).toBe("uuid-2");
     });
 
-    test("explicit checkpointIndex targets correct entry", () => {
+    it("explicit checkpointIndex targets correct entry", () => {
       const checkpoints = ["uuid-0", "uuid-1", "uuid-2"];
       const checkpointIndex = 1;
       const idx = typeof checkpointIndex === "number" ? checkpointIndex : checkpoints.length - 1;
-      assert.equal(idx, 1);
-      assert.equal(checkpoints[idx], "uuid-1");
+      expect(idx).toBe(1);
+      expect(checkpoints[idx]).toBe("uuid-1");
     });
 
-    test("out-of-range checkpointIndex is rejected", () => {
+    it("out-of-range checkpointIndex is rejected", () => {
       const checkpoints = ["uuid-0", "uuid-1"];
       const checkpointIndex = 5;
       const idx = typeof checkpointIndex === "number" ? checkpointIndex : checkpoints.length - 1;
       const isValid = idx >= 0 && idx < checkpoints.length;
-      assert.equal(isValid, false);
+      expect(isValid).toBe(false);
       // Should return 400: "Invalid checkpointIndex"
     });
 
-    test("negative checkpointIndex is rejected", () => {
+    it("negative checkpointIndex is rejected", () => {
       const checkpoints = ["uuid-0", "uuid-1"];
       const checkpointIndex = -1;
       const isValid = checkpointIndex >= 0 && checkpointIndex < checkpoints.length;
-      assert.equal(isValid, false);
+      expect(isValid).toBe(false);
     });
   });
 
   describe("checkpoint truncation after rewind", () => {
-    test("rewind to index 2 of 4 leaves [0, 1]", () => {
+    it("rewind to index 2 of 4 leaves [0, 1]", () => {
       const checkpoints = ["uuid-0", "uuid-1", "uuid-2", "uuid-3"];
       const idx = 2;
       const remaining = checkpoints.slice(0, idx);
-      assert.deepEqual(remaining, ["uuid-0", "uuid-1"]);
+      expect(remaining).toEqual(["uuid-0", "uuid-1"]);
     });
 
-    test("rewind to index 0 leaves empty array", () => {
+    it("rewind to index 0 leaves empty array", () => {
       const checkpoints = ["uuid-0", "uuid-1"];
       const idx = 0;
       const remaining = checkpoints.slice(0, idx);
-      assert.deepEqual(remaining, []);
+      expect(remaining).toEqual([]);
     });
 
-    test("rewind to last leaves all but last", () => {
+    it("rewind to last leaves all but last", () => {
       const checkpoints = ["uuid-0", "uuid-1", "uuid-2"];
       const idx = checkpoints.length - 1;
       const remaining = checkpoints.slice(0, idx);
-      assert.deepEqual(remaining, ["uuid-0", "uuid-1"]);
+      expect(remaining).toEqual(["uuid-0", "uuid-1"]);
     });
   });
 
   describe("rewind response shape", () => {
-    test("successful rewind response has expected fields", () => {
+    it("successful rewind response has expected fields", () => {
       const response = {
         ok: true,
         checkpointIndex: 2,
@@ -153,15 +151,15 @@ describe("checkpointing", () => {
         remainingCheckpoints: 2,
       };
 
-      assert.equal(response.ok, true);
-      assert.equal(response.checkpointIndex, 2);
-      assert.equal(response.uuid, "uuid-2");
-      assert.equal(response.remainingCheckpoints, 2);
+      expect(response.ok).toBe(true);
+      expect(response.checkpointIndex).toBe(2);
+      expect(response.uuid).toBe("uuid-2");
+      expect(response.remainingCheckpoints).toBe(2);
     });
   });
 
   describe("result event checkpoint propagation to client", () => {
-    test("checkpoints array is sent in result event", () => {
+    it("checkpoints array is sent in result event", () => {
       const session = {
         checkpoints: ["uuid-1", "uuid-2"],
         totalCostUsd: 0,
@@ -174,10 +172,10 @@ describe("checkpointing", () => {
         numTurns: session.messageCount,
       };
 
-      assert.deepEqual(resultEventPayload.checkpoints, ["uuid-1", "uuid-2"]);
+      expect(resultEventPayload.checkpoints).toEqual(["uuid-1", "uuid-2"]);
     });
 
-    test("client sets checkpointCount from result event", () => {
+    it("client sets checkpointCount from result event", () => {
       let checkpointCount = 0;
 
       // Simulate handling result event
@@ -187,30 +185,30 @@ describe("checkpointing", () => {
         checkpointCount = checkpoints.length;
       }
 
-      assert.equal(checkpointCount, 3);
+      expect(checkpointCount).toBe(3);
     });
   });
 
   describe("undo button visibility", () => {
-    test("undo button visible when checkpointCount > 0 and not streaming", () => {
+    it("undo button visible when checkpointCount > 0 and not streaming", () => {
       const checkpointCount = 2;
       const isStreaming = false;
       const showUndoButton = checkpointCount > 0 && !isStreaming;
-      assert.equal(showUndoButton, true);
+      expect(showUndoButton).toBe(true);
     });
 
-    test("undo button hidden when streaming", () => {
+    it("undo button hidden when streaming", () => {
       const checkpointCount = 2;
       const isStreaming = true;
       const showUndoButton = checkpointCount > 0 && !isStreaming;
-      assert.equal(showUndoButton, false);
+      expect(showUndoButton).toBe(false);
     });
 
-    test("undo button hidden when no checkpoints", () => {
+    it("undo button hidden when no checkpoints", () => {
       const checkpointCount = 0;
       const isStreaming = false;
       const showUndoButton = checkpointCount > 0 && !isStreaming;
-      assert.equal(showUndoButton, false);
+      expect(showUndoButton).toBe(false);
     });
   });
 });

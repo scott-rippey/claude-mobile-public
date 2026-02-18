@@ -6,7 +6,7 @@ import type { FileEntry } from "../types.js";
 const router = Router();
 
 // GET /api/files?path=relative/path
-router.get("/", async (req, res) => {
+export async function handleListFiles(req: import("express").Request, res: import("express").Response) {
   const baseDir = process.env.BASE_DIR!;
   const relativePath = (req.query.path as string) || "";
 
@@ -49,10 +49,12 @@ router.get("/", async (req, res) => {
       res.status(500).json({ error: message });
     }
   }
-});
+}
+
+router.get("/", handleListFiles);
 
 // POST /api/files/mkdir — create a new folder
-router.post("/mkdir", async (req, res) => {
+export async function handleMkdir(req: import("express").Request, res: import("express").Response) {
   const baseDir = process.env.BASE_DIR!;
   const relativePath = (req.body.path as string) || "";
   const name = (req.body.name as string) || "";
@@ -85,6 +87,8 @@ router.post("/mkdir", async (req, res) => {
       res.status(500).json({ error: message });
     }
   }
-});
+}
+
+router.post("/mkdir", handleMkdir);
 
 export default router;

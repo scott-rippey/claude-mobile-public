@@ -1,6 +1,6 @@
 # Claude Code Mobile
 
-**v1.0.1**
+**v1.1.0**
 
 Access Claude Code from your phone. Full Claude Agent SDK with file browsing, chat, terminal, and real-time streaming — all through a mobile-friendly web interface.
 
@@ -14,7 +14,9 @@ Access Claude Code from your phone. Full Claude Agent SDK with file browsing, ch
 - **MCP Servers** — loads your configured MCP servers from project/user settings, plus [Context7](https://github.com/upstash/context7) for up-to-date library docs
 - **Context Tracking** — live context usage bar with real-time token updates
 - **Mobile-First** — designed for phone screens with touch-friendly controls
-- **Session State** — in-memory per session (model, cost, context usage). Sessions expire after 24h and are lost on server restart.
+- **Session Persistence** — sessions survive server restarts via debounced disk writes. Tracks model, cost, context usage per session. 24h TTL with auto-cleanup.
+- **Graceful Interrupt** — first tap sends a graceful interrupt (Claude finishes current thought), second tap within 3s forces a hard abort. Visual "Interrupting..." feedback.
+- **File Checkpointing + Undo** — automatically checkpoints file changes during chat. One-tap "Undo" button rewinds Claude's file edits to any previous checkpoint.
 
 ## Architecture
 
@@ -260,7 +262,7 @@ All three must pass before committing — every push triggers a Vercel deploy.
 - **ALLOWED_EMAILS** restricts which Google accounts can sign in. Set this to only your own email(s).
 - **BASE_DIR** controls what files cc-server can access. Set this to a specific projects directory, not your entire home folder.
 - **Cloudflare Tunnel** encrypts all traffic between Vercel and your server — your server doesn't need to be directly exposed to the internet.
-- **Session state is in-memory** — restarting cc-server clears all sessions. No data is persisted to disk.
+- **Session state persists to disk** — sessions are saved to `cc-server/data/sessions.json` (debounced writes, atomic rename). Bulky fields (model lists, init data) are ephemeral and repopulate on the next message. The `data/` directory is gitignored.
 
 ## Troubleshooting
 
@@ -294,6 +296,7 @@ lsof -ti :3020 | xargs kill
 
 ## Version History
 
+- **v1.1.0** — Session persistence (survives server restarts), graceful interrupt (two-tap stop with visual feedback), file checkpointing + undo (rewind Claude's file changes). Added Vitest test suite (43 tests for new features). QueryRunner/TerminalRunner decoupled from SSE connections for reconnect support.
 - **v1.0.1** — Improved README for public release: cross-platform setup (Mac/Linux/WSL), security considerations, troubleshooting guide, local dev instructions. Fixed localhost port fallback bug.
 - **v1.0.0** — Initial public release. Chat, file browser, terminal, permission modes, slash commands, MCP servers, context tracking.
 
