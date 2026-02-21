@@ -16,26 +16,36 @@ interface PermissionModalProps {
   onDeny: (requestId: string) => void;
 }
 
+function stringify(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function formatToolDisplay(toolName: string, input: Record<string, unknown>) {
   // Show the most relevant input for common tools
   if (toolName === "Bash" || toolName === "bash") {
-    return { label: "Run command", detail: String(input.command || input.cmd || "") };
+    return { label: "Run command", detail: stringify(input.command || input.cmd || "") };
   }
   if (toolName === "Edit" || toolName === "edit") {
-    return { label: "Edit file", detail: String(input.file_path || input.path || "") };
+    return { label: "Edit file", detail: stringify(input.file_path || input.path || "") };
   }
   if (toolName === "Write" || toolName === "write") {
-    return { label: "Write file", detail: String(input.file_path || input.path || "") };
+    return { label: "Write file", detail: stringify(input.file_path || input.path || "") };
   }
   if (toolName === "Read" || toolName === "read") {
-    return { label: "Read file", detail: String(input.file_path || input.path || "") };
+    return { label: "Read file", detail: stringify(input.file_path || input.path || "") };
   }
   if (toolName === "MultiEdit" || toolName === "multiedit") {
-    return { label: "Edit multiple files", detail: String(input.file_path || input.path || "") };
+    return { label: "Edit multiple files", detail: stringify(input.file_path || input.path || "") };
   }
-  // Generic fallback
+  // Generic fallback — JSON-stringify objects instead of [object Object]
   const firstValue = Object.values(input)[0];
-  return { label: toolName, detail: firstValue ? String(firstValue).slice(0, 200) : "" };
+  return { label: toolName, detail: stringify(firstValue).slice(0, 500) };
 }
 
 function getToolIcon(toolName: string) {
