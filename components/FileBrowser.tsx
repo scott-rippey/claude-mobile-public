@@ -153,6 +153,56 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
         </Link>
       )}
 
+      {/* New Folder button — always at top, right below nav */}
+      {!isEmbedded && !loading && !error && !creatingFolder && (
+        <button
+          onClick={() => setCreatingFolder(true)}
+          className="flex items-center gap-2 px-4 py-2.5 mb-2 text-sm text-muted hover:text-foreground hover:bg-card rounded-lg transition-colors"
+        >
+          <FolderPlus size={18} />
+          <span>New Folder</span>
+        </button>
+      )}
+
+      {/* New folder input form */}
+      {creatingFolder && (
+        <div className="px-4 py-3 mb-2">
+          <div className="flex items-center gap-2">
+            <Folder size={20} className="text-accent shrink-0" />
+            <input
+              ref={newFolderInputRef}
+              type="text"
+              value={newFolderName}
+              onChange={(e) => { setNewFolderName(e.target.value); setMkdirError(null); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateFolder();
+                if (e.key === "Escape") cancelCreateFolder();
+              }}
+              placeholder="Folder name"
+              disabled={mkdirLoading}
+              className="flex-1 min-w-0 bg-background border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-accent"
+            />
+            <button
+              onClick={handleCreateFolder}
+              disabled={mkdirLoading || !newFolderName.trim()}
+              className="p-1.5 text-green-400 hover:bg-green-400/10 rounded disabled:opacity-40"
+            >
+              {mkdirLoading ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+            </button>
+            <button
+              onClick={cancelCreateFolder}
+              disabled={mkdirLoading}
+              className="p-1.5 text-red-400 hover:bg-red-400/10 rounded disabled:opacity-40"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          {mkdirError && (
+            <div className="text-xs text-red-400 mt-1.5 ml-7">{mkdirError}</div>
+          )}
+        </div>
+      )}
+
       {/* Empty folder state — prominent CTA for both embedded workspace and browse pages */}
       {/* Workspace embedded: show immediately (entries starts empty before API returns) */}
       {onStartChat && entries.length === 0 && (
@@ -202,54 +252,7 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
         </div>
       ) : (
         <>
-          {!isEmbedded && !creatingFolder && (
-            <button
-              onClick={() => setCreatingFolder(true)}
-              className="flex items-center gap-2 px-4 py-2.5 mb-2 text-sm text-muted hover:text-foreground hover:bg-card rounded-lg transition-colors"
-            >
-              <FolderPlus size={18} />
-              <span>New Folder</span>
-            </button>
-          )}
-
           <div className="divide-y divide-border">
-            {creatingFolder && (
-              <div className="px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Folder size={20} className="text-accent shrink-0" />
-                  <input
-                    ref={newFolderInputRef}
-                    type="text"
-                    value={newFolderName}
-                    onChange={(e) => { setNewFolderName(e.target.value); setMkdirError(null); }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleCreateFolder();
-                      if (e.key === "Escape") cancelCreateFolder();
-                    }}
-                    placeholder="Folder name"
-                    disabled={mkdirLoading}
-                    className="flex-1 min-w-0 bg-background border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-accent"
-                  />
-                  <button
-                    onClick={handleCreateFolder}
-                    disabled={mkdirLoading || !newFolderName.trim()}
-                    className="p-1.5 text-green-400 hover:bg-green-400/10 rounded disabled:opacity-40"
-                  >
-                    {mkdirLoading ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-                  </button>
-                  <button
-                    onClick={cancelCreateFolder}
-                    disabled={mkdirLoading}
-                    className="p-1.5 text-red-400 hover:bg-red-400/10 rounded disabled:opacity-40"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-                {mkdirError && (
-                  <div className="text-xs text-red-400 mt-1.5 ml-7">{mkdirError}</div>
-                )}
-              </div>
-            )}
             {entries.map((entry) => {
               const Icon =
                 entry.type === "directory" ? Folder : getFileIcon(entry.name);

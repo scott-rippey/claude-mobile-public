@@ -77,7 +77,6 @@ account_info, hook_pre_tool_use, hook_post_tool_use, buffer_gap, reconnect_compl
 - `cc-server/.env` — `SHARED_SECRET`, `TUNNEL_TOKEN`, etc. (not committed)
 - `Start CC Server.command` — macOS launcher for cc-server (tunnel + server)
 - `Start CC Server Local.command` — local-only launcher (server only, no tunnel)
-- `docs/IMPLEMENTATION_PLAN.md` — checklist of all phases
 
 ## Environment Rules
 

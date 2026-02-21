@@ -2,3 +2,6 @@
 # Used by scripts/publish-public.sh
 docs
 .claude
+scripts
+.publicignore
+Start CC Server Local.command
