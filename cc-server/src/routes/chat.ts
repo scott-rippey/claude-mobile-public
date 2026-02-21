@@ -493,21 +493,21 @@ router.post("/", async (req, res) => {
           return new Promise<PermissionResult>((resolve, reject) => {
             const requestId = `${queryId}:${crypto.randomUUID()}`;
 
-            // Warn at 45s that permission is expiring
+            // Warn at 90s that permission is expiring
             const warning = setTimeout(() => {
               sendEvent("permission_warning", {
                 requestId,
                 message: "Permission request expiring soon...",
               });
-            }, 45_000);
+            }, 90_000);
 
-            // Auto-deny after 60s (mobile users respond quickly or not at all)
+            // Auto-deny after 120s (mobile users may switch apps and come back)
             const timeout = setTimeout(() => {
               console.error(`[chat] permission timeout for ${requestId}`);
               clearTimeout(warning);
               pendingPermissions.delete(requestId);
               resolve({ behavior: "deny", message: "Permission request timed out" });
-            }, 60_000);
+            }, 120_000);
 
             pendingPermissions.set(requestId, { resolve, reject, timeout, input });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Settings, ChevronUp } from "lucide-react";
 import { ModeSelector, type ChatMode } from "./ModeSelector";
 
@@ -29,6 +29,59 @@ const TURN_PRESETS = [
   { label: "Auto", value: null },
 ];
 
+function CustomInput({
+  value,
+  onSave,
+  onCancel,
+  prefix,
+  placeholder,
+}: {
+  value: number | null;
+  onSave: (v: number | null) => void;
+  onCancel: () => void;
+  prefix?: string;
+  placeholder: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState(value != null ? String(value) : "");
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const commit = () => {
+    const num = parseFloat(text);
+    if (text.trim() === "" || isNaN(num) || num <= 0) {
+      onCancel();
+    } else {
+      onSave(num);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      {prefix && <span className="text-xs text-muted">{prefix}</span>}
+      <input
+        ref={inputRef}
+        type="number"
+        inputMode="decimal"
+        min="0"
+        step="any"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") onCancel();
+        }}
+        onBlur={commit}
+        placeholder={placeholder}
+        className="w-16 px-1.5 py-1 text-xs rounded-md bg-background border border-accent text-foreground focus:outline-none tabular-nums"
+      />
+    </div>
+  );
+}
+
 export function ChatSettings({
   mode,
   onModeChange,
@@ -40,9 +93,15 @@ export function ChatSettings({
   disabled,
 }: ChatSettingsProps) {
   const [expanded, setExpanded] = useState(false);
+  const [customBudget, setCustomBudget] = useState(false);
+  const [customTurns, setCustomTurns] = useState(false);
+
+  const isCustomBudget = budgetCapUsd !== null && !BUDGET_PRESETS.some((p) => p.value === budgetCapUsd);
+  const isCustomTurns = maxTurns !== null && !TURN_PRESETS.some((p) => p.value === maxTurns);
 
   const handleBudgetChange = useCallback(
     (value: number | null) => {
+      setCustomBudget(false);
       onSettingsChange({ budgetCapUsd: value });
     },
     [onSettingsChange]
@@ -50,6 +109,7 @@ export function ChatSettings({
 
   const handleTurnsChange = useCallback(
     (value: number | null) => {
+      setCustomTurns(false);
       onSettingsChange({ maxTurns: value });
     },
     [onSettingsChange]
@@ -83,15 +143,15 @@ export function ChatSettings({
           {/* Budget cap */}
           <div>
             <label className="text-[11px] text-muted block mb-1">Budget cap</label>
-            <div className="flex gap-1">
+            <div className="flex gap-1 items-center">
               {BUDGET_PRESETS.map((preset) => (
                 <button
                   key={preset.label}
                   onClick={() => handleBudgetChange(preset.value)}
                   disabled={!sessionId}
                   className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                    budgetCapUsd === preset.value ||
-                    (preset.value === null && budgetCapUsd === null)
+                    !customBudget && (budgetCapUsd === preset.value ||
+                    (preset.value === null && budgetCapUsd === null))
                       ? "bg-accent text-white"
                       : "bg-card border border-border text-muted hover:text-foreground"
                   } ${!sessionId ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -99,21 +159,42 @@ export function ChatSettings({
                   {preset.label}
                 </button>
               ))}
+              {customBudget ? (
+                <CustomInput
+                  value={isCustomBudget ? budgetCapUsd : null}
+                  onSave={handleBudgetChange}
+                  onCancel={() => setCustomBudget(false)}
+                  prefix="$"
+                  placeholder="10"
+                />
+              ) : (
+                <button
+                  onClick={() => setCustomBudget(true)}
+                  disabled={!sessionId}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                    isCustomBudget
+                      ? "bg-accent text-white"
+                      : "bg-card border border-border text-muted hover:text-foreground"
+                  } ${!sessionId ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  {isCustomBudget ? `$${budgetCapUsd}` : "Custom"}
+                </button>
+              )}
             </div>
           </div>
 
           {/* Turn limit */}
           <div>
             <label className="text-[11px] text-muted block mb-1">Turn limit</label>
-            <div className="flex gap-1">
+            <div className="flex gap-1 items-center">
               {TURN_PRESETS.map((preset) => (
                 <button
                   key={preset.label}
                   onClick={() => handleTurnsChange(preset.value)}
                   disabled={!sessionId}
                   className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                    maxTurns === preset.value ||
-                    (preset.value === null && maxTurns === null)
+                    !customTurns && (maxTurns === preset.value ||
+                    (preset.value === null && maxTurns === null))
                       ? "bg-accent text-white"
                       : "bg-card border border-border text-muted hover:text-foreground"
                   } ${!sessionId ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -121,6 +202,26 @@ export function ChatSettings({
                   {preset.label}
                 </button>
               ))}
+              {customTurns ? (
+                <CustomInput
+                  value={isCustomTurns ? maxTurns : null}
+                  onSave={(v) => handleTurnsChange(v != null ? Math.round(v) : null)}
+                  onCancel={() => setCustomTurns(false)}
+                  placeholder="50"
+                />
+              ) : (
+                <button
+                  onClick={() => setCustomTurns(true)}
+                  disabled={!sessionId}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                    isCustomTurns
+                      ? "bg-accent text-white"
+                      : "bg-card border border-border text-muted hover:text-foreground"
+                  } ${!sessionId ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  {isCustomTurns ? `${maxTurns}` : "Custom"}
+                </button>
+              )}
             </div>
           </div>
         </div>
