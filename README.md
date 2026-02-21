@@ -1,6 +1,6 @@
 # Claude Code Mobile
 
-**v1.1.0**
+**v1.2.0**
 
 Access Claude Code from your phone. Full Claude Agent SDK with file browsing, chat, terminal, and real-time streaming — all through a mobile-friendly web interface.
 
@@ -9,14 +9,21 @@ Access Claude Code from your phone. Full Claude Agent SDK with file browsing, ch
 - **Chat with Claude Code** — full Agent SDK with token-by-token streaming, tool call indicators, and activity feedback (default model: `claude-opus-4-6`)
 - **File Browser** — browse, view, and navigate your project files
 - **Terminal** — execute commands on your server machine
-- **Permission Modes** — Default, Accept Edits, and Plan mode switchable mid-conversation (60s timeout with 45s warning)
+- **Permission Modes** — Default, Accept Edits, Plan, and Bypass mode switchable mid-conversation (60s timeout with 45s warning)
+- **Cost & Turn Limits** — set per-session budget caps ($1/$5/$25) and turn limits (5/10/25) via expandable settings panel
+- **Mid-Query Controls** — switch models, adjust thinking budget, and manage MCP servers during active queries
+- **Session Fork** — branch a conversation without affecting the original, with lineage tracking
 - **Slash Commands** — built-in (`/help`, `/model`, `/status`, `/compact`, `/clear`) plus your existing custom `.md` commands
-- **MCP Servers** — loads your configured MCP servers from project/user settings, plus [Context7](https://github.com/upstash/context7) for up-to-date library docs
-- **Context Tracking** — live context usage bar with real-time token updates
+- **MCP Servers** — loads your configured MCP servers from project/user settings, plus [Context7](https://github.com/upstash/context7) for up-to-date library docs. Dynamic add/remove via API.
+- **Context Tracking** — live context usage bar with real-time token updates and session cost display
+- **Account Info** — shows authenticated user details, organization, and subscription type in `/status`
 - **Mobile-First** — designed for phone screens with touch-friendly controls
 - **Session Persistence** — sessions survive server restarts via debounced disk writes. Tracks model, cost, context usage per session. 24h TTL with auto-cleanup.
-- **Graceful Interrupt** — first tap sends a graceful interrupt (Claude finishes current thought), second tap within 3s forces a hard abort. Visual "Interrupting..." feedback.
-- **File Checkpointing + Undo** — automatically checkpoints file changes during chat. One-tap "Undo" button rewinds Claude's file edits to any previous checkpoint.
+- **Graceful Interrupt** — first tap sends `response.interrupt()` (Claude finishes current thought), second tap within 3s forces a hard abort. Visual "Interrupting..." feedback.
+- **File Checkpointing + Undo** — `enableFileCheckpointing` tracks file changes during chat. One-tap "Undo" button calls `response.rewindFiles()` to restore files to any previous checkpoint.
+- **Tool Hooks** — informational PreToolUse/PostToolUse hooks forward tool audit events to the client
+- **Structured Output** — pass `outputFormat` with JSON schema for structured responses
+- **Session Recovery** — `options.continue` auto-resumes most recent conversation when session is lost
 
 ## Architecture
 
@@ -212,6 +219,7 @@ Switch modes using the selector above the chat input:
 - **Default** — prompts for permission on dangerous operations (bash commands, etc.)
 - **Accept Edits** — auto-allows file edits, still prompts for bash
 - **Plan** — planning mode, no tool execution
+- **Bypass** — skips ALL permission checks (requires confirmation)
 
 Permission requests timeout after 60 seconds (warning shown at 45s).
 
@@ -296,6 +304,7 @@ lsof -ti :3020 | xargs kill
 
 ## Version History
 
+- **v1.2.0** — SDK feature expansion: query controls (budget caps, turn limits, continue), account info, mid-query controls (model switch, thinking budget, dynamic MCP), session features (fork, file checkpointing backend, graceful interrupt backend), informational hooks, bypass permissions mode, ChatSettings UI panel, structured output support, session recovery. 171 tests passing.
 - **v1.1.0** — Session persistence (survives server restarts), graceful interrupt (two-tap stop with visual feedback), file checkpointing + undo (rewind Claude's file changes). Added Vitest test suite (43 tests for new features). QueryRunner/TerminalRunner decoupled from SSE connections for reconnect support.
 - **v1.0.1** — Improved README for public release: cross-platform setup (Mac/Linux/WSL), security considerations, troubleshooting guide, local dev instructions. Fixed localhost port fallback bug.
 - **v1.0.0** — Initial public release. Chat, file browser, terminal, permission modes, slash commands, MCP servers, context tracking.

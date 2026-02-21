@@ -1,6 +1,10 @@
 # Claude Code Mobile
 
-Remote Claude Code interface — access Claude Agent SDK and your server's file system from your phone.
+Remote Claude Code interface — access Claude Code from your phone via your Max plan subscription.
+
+## How It Works
+
+**This does NOT use the Anthropic API.** The server machine runs Claude Code CLI locally using a Max plan subscription. The Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) is a Node.js wrapper that spawns and controls the local Claude Code process — same as running `claude` in a terminal, but programmatically. All usage counts against the Max plan's included allowance, not API credits.
 
 ## Architecture
 
@@ -8,7 +12,7 @@ Remote Claude Code interface — access Claude Agent SDK and your server's file 
 Phone → Vercel (Next.js + Google Auth)
   → API proxy routes → Cloudflare Tunnel
     → Server machine (cc-server, port 3020)
-      → Claude Agent SDK + file system access
+      → Claude Agent SDK → local Claude Code CLI (Max plan)
 ```
 
 ### Frontend (root — deploys to Vercel)
@@ -16,17 +20,31 @@ Phone → Vercel (Next.js + Google Auth)
 - **NextAuth** with Google OAuth (only authorized users)
 - **API routes** (`app/api/`) proxy requests to cc-server through Cloudflare Tunnel
 - **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/file/chat/terminal/help)
-- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage, StatusBar, ClaudeLogo
+- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage, StatusBar, ClaudeLogo, ChatSettings, ModeSelector
 
 ### Backend (`cc-server/` — runs on your server machine)
 - **Express** server on port 3020
 - **Auth middleware** validates shared secret from Vercel API routes
-- **Routes:** `/api/files`, `/api/file`, `/api/chat` (SSE streaming), `/api/chat/abort`, `/api/chat/permission`, `/api/chat/mode`, `/api/chat/status`, `/api/chat/reconnect` (SSE), `/api/terminal` (SSE streaming), `/api/terminal/status`, `/api/terminal/reconnect` (SSE)
+- **Routes:**
+  - `/api/files`, `/api/file` — file browsing
+  - `/api/chat` (SSE streaming) — main chat endpoint
+  - `/api/chat/abort` — abort/interrupt active query (supports graceful interrupt)
+  - `/api/chat/permission` — respond to permission requests
+  - `/api/chat/mode` — change permission mode (default, acceptEdits, plan, bypassPermissions)
+  - `/api/chat/model` — change model mid-query via `response.setModel()`
+  - `/api/chat/thinking` — set thinking budget via `response.setMaxThinkingTokens()`
+  - `/api/chat/settings` — update session settings (budgetCapUsd, maxTurns, maxThinkingTokens)
+  - `/api/chat/mcp-servers` — dynamic MCP server management via `response.setMcpServers()`
+  - `/api/chat/rewind` — rewind files to a checkpoint via `response.rewindFiles()`
+  - `/api/chat/status` — lightweight query status check
+  - `/api/chat/reconnect` (SSE) — replay + subscribe to running query
+  - `/api/terminal` (SSE streaming), `/api/terminal/status`, `/api/terminal/reconnect` (SSE)
 - **Claude Agent SDK** integration for chat with `settingSources: ["project", "user"]` and `includePartialMessages: true` for token-by-token streaming
+- **SDK features used:** `enableFileCheckpointing`, `maxBudgetUsd`, `maxTurns`, `maxThinkingTokens`, `forkSession`, `continue`, `outputFormat`, `bypassPermissions`, `hooks` (PreToolUse, PostToolUse), `accountInfo()`, `supportedModels()`, `mcpServerStatus()`, `interrupt()`, `setModel()`, `setMaxThinkingTokens()`, `setMcpServers()`, `setPermissionMode()`, `rewindFiles()`
 - **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
 - **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
-- **In-memory session state** tracks model, permissionMode, context tokens, context window, and cost per sessionId (lost on restart, 24h TTL with auto-cleanup)
-- **Permission modes** — Default/Accept Edits/Plan switchable mid-session via UI selector; maps directly to SDK `permissionMode` values
+- **Session persistence** via `session-store.ts` — debounced disk writes, loaded on startup, SIGTERM/SIGINT flush
+- **Permission modes** — Default/Accept Edits/Plan/Bypass switchable mid-session via UI selector; maps directly to SDK `permissionMode` values
 - **SSE heartbeats** — both chat and terminal streams send keepalive pings every 15s to prevent proxy/tunnel timeouts
 - **QueryRunner** (`cc-server/src/query-runner.ts`) — decouples query execution from SSE connection lifetime; buffers events with sequential indices, supports listener subscribe/unsubscribe, replay-from-index for reconnection, 2000-event cap with FIFO eviction, 5min TTL cleanup for completed runners
 - **TerminalRunner** — same pattern for terminal commands; process survives client disconnect, orphaned processes auto-killed after 30min
@@ -37,6 +55,21 @@ Phone → Vercel (Next.js + Google Auth)
 - `Start CC Server Local.command` starts server only (no tunnel) for local testing
 - NOT deployed to Vercel — this subfolder runs on your server machine (Mac, Linux, or WSL on Windows)
 - Has its own `package.json`, `tsconfig.json`, and `node_modules`
+
+### Session State Fields
+```
+model, permissionMode, totalCostUsd, messageCount, contextTokens, contextWindow,
+lastActivity, checkpoints[], budgetCapUsd?, maxTurns?, maxThinkingTokens?,
+forkedFrom?, supportedModels? (ephemeral), accountInfo? (ephemeral), lastInit? (ephemeral)
+```
+
+### SSE Event Types
+```
+query_start, init, assistant, tool_call, tool_result, tool_progress,
+stream_event, context_update, compact_boundary, system, result, error, done,
+permission_request, permission_warning, supported_models, mcp_status,
+account_info, hook_pre_tool_use, hook_post_tool_use, buffer_gap, reconnect_complete
+```
 
 ### Key Files
 - `cc-server/` — excluded from root `tsconfig.json` and `eslint.config.mjs`
@@ -79,3 +112,9 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 - `BASE_DIR` — root directory for file browsing and terminal (e.g. `/path/to/your/projects`)
 - `PORT` — defaults to 3020
 - `TUNNEL_TOKEN` — Cloudflare tunnel token (used by `Start CC Server.command`)
+
+## Version History
+
+- **v1.2.0** — SDK feature expansion: query controls (budget, turns, continue), account info, mid-query controls (model switch, thinking budget, dynamic MCP), session features (fork, file checkpointing, graceful interrupt), hooks, bypass permissions, ChatSettings UI, structured output support
+- **v1.1.0** — Session persistence, graceful interrupt UI, file checkpointing UI
+- **v1.0.0** — Initial release: chat, file browsing, terminal, permissions, reconnection
