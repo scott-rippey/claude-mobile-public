@@ -13,8 +13,11 @@ import {
   getSession,
   BUILTIN_COMMANDS,
   type CommandContext,
+  type SessionState,
 } from "./chat.js";
 import { createMockRequest, createMockResponse, createTempDir, cleanupTempDir } from "../test-utils.js";
+
+const DEFAULT_MODEL = "claude-opus-4-6";
 
 // ── Helper: create a CommandContext with captured events ─────────────
 
@@ -24,7 +27,7 @@ function createTestContext(overrides: Partial<CommandContext> = {}): CommandCont
     sendEvent: (type, data) => events.push({ type, data }),
     cwd: overrides.cwd || "/tmp/test-project",
     sessionId: overrides.sessionId || "test-session-1",
-    session: overrides.session || getSession(undefined),
+    session: overrides.session || getSession(undefined, DEFAULT_MODEL),
     args: overrides.args || "",
     events,
   };
@@ -64,7 +67,7 @@ describe("Built-in commands", () => {
     });
 
     it("includes skills when session has lastInit with skills", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.lastInit = {
         tools: [],
         mcpServers: [],
@@ -87,7 +90,7 @@ describe("Built-in commands", () => {
 
   describe("/status", () => {
     it("returns session overview", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.model = "claude-opus-4-6";
       session.messageCount = 5;
       const ctx = createTestContext({ session });
@@ -102,7 +105,7 @@ describe("Built-in commands", () => {
     });
 
     it("includes init data when available", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.lastInit = {
         tools: ["Read", "Write", "Bash"],
         mcpServers: [{ name: "context7", status: "connected" }],
@@ -125,7 +128,7 @@ describe("Built-in commands", () => {
 
   describe("/model", () => {
     it("shows current model without args", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.model = "claude-opus-4-6";
       const ctx = createTestContext({ session, args: "" });
 
@@ -137,7 +140,7 @@ describe("Built-in commands", () => {
     });
 
     it("changes model with args", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       const ctx = createTestContext({ session, args: "claude-sonnet-4-6" });
 
       await handleModel(ctx);
@@ -148,7 +151,7 @@ describe("Built-in commands", () => {
     });
 
     it("lists supported models when available", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.supportedModels = [
         { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
         { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
@@ -175,7 +178,7 @@ describe("Built-in commands", () => {
     });
 
     it("returns MCP status when init data exists", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.lastInit = {
         tools: [],
         mcpServers: [
@@ -203,7 +206,7 @@ describe("Built-in commands", () => {
 
   describe("/context", () => {
     it("shows context usage when data exists", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.contextTokens = 50000;
       session.contextWindow = 200000;
       const ctx = createTestContext({ session });
@@ -217,7 +220,7 @@ describe("Built-in commands", () => {
     });
 
     it("shows 'no context data' without usage", async () => {
-      const session = getSession(undefined);
+      const session = getSession(undefined, DEFAULT_MODEL);
       session.contextWindow = 0;
       const ctx = createTestContext({ session });
 
@@ -335,7 +338,7 @@ describe("findCustomCommands", () => {
 
 describe("getSession", () => {
   it("returns default session for undefined sessionId", () => {
-    const session = getSession(undefined);
+    const session = getSession(undefined, DEFAULT_MODEL);
 
     expect(session.model).toBe("claude-opus-4-6");
     expect(session.permissionMode).toBe("default");
@@ -344,7 +347,7 @@ describe("getSession", () => {
   });
 
   it("returns default session for unknown sessionId", () => {
-    const session = getSession("unknown-session-id");
+    const session = getSession("unknown-session-id", DEFAULT_MODEL);
 
     expect(session.model).toBe("claude-opus-4-6");
     expect(session.permissionMode).toBe("default");
@@ -378,8 +381,8 @@ describe("POST /api/chat (validation)", () => {
   // we test the exported utility functions and the validation patterns.
 
   it("getSession returns consistent defaults", () => {
-    const s1 = getSession(undefined);
-    const s2 = getSession("new-session");
+    const s1 = getSession(undefined, DEFAULT_MODEL);
+    const s2 = getSession("new-session", DEFAULT_MODEL);
 
     expect(s1.model).toBe(s2.model);
     expect(s1.permissionMode).toBe(s2.permissionMode);
@@ -397,7 +400,7 @@ describe("Chat utility endpoint validation patterns", () => {
   it("status endpoint requires sessionId (tested via BUILTIN_COMMANDS + getSession)", () => {
     // The GET /status handler checks: if (!sessionId) → 400
     // We verify this pattern exists by checking getSession handles undefined
-    const session = getSession(undefined);
+    const session = getSession(undefined, DEFAULT_MODEL);
     expect(session).toBeDefined();
   });
 
@@ -422,7 +425,7 @@ describe("Chat utility endpoint validation patterns", () => {
 
   it("mode endpoint saves mode to session state", () => {
     // Tested indirectly: getSession returns default, model change persists
-    const session = getSession(undefined);
+    const session = getSession(undefined, DEFAULT_MODEL);
     session.permissionMode = "plan";
     expect(session.permissionMode).toBe("plan");
   });

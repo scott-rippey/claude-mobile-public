@@ -7,6 +7,13 @@ import fs from "fs/promises";
 import os from "os";
 import type { ChatRequest } from "../types.js";
 import {
+  getSession,
+  saveSession,
+  deleteSession,
+  getSessionCount,
+  type SessionState,
+} from "../session-store.js";
+import {
   QueryRunner,
   registerRunner,
   updateRunnerSessionId,
@@ -34,54 +41,8 @@ interface PendingPermission {
 }
 const pendingPermissions = new Map<string, PendingPermission>();
 
-// ── Session state (in-memory, lost on server restart) ──────────────
-interface SessionState {
-  model: string;
-  permissionMode: "default" | "acceptEdits" | "plan";
-  totalCostUsd: number;
-  messageCount: number;
-  contextTokens: number;   // Last input_tokens (current context size)
-  contextWindow: number;   // Max context window for the model
-  lastActivity: number;    // timestamp for TTL cleanup
-  supportedModels?: { id: string; name?: string }[];
-  lastInit?: {
-    tools: string[];
-    mcpServers: { name: string; status: string }[];
-    slashCommands: string[];
-    skills: string[];
-    plugins: { name: string; path: string }[];
-    claudeCodeVersion: string;
-    cwd: string;
-  };
-}
-
-const sessions = new Map<string, SessionState>();
-
-export function getSession(sessionId: string | undefined): SessionState {
-  if (sessionId && sessions.has(sessionId)) return sessions.get(sessionId)!;
-  return { model: DEFAULT_MODEL, permissionMode: "default", totalCostUsd: 0, messageCount: 0, contextTokens: 0, contextWindow: 0, lastActivity: Date.now() };
-}
-
-function saveSession(sessionId: string, state: SessionState) {
-  state.lastActivity = Date.now();
-  sessions.set(sessionId, state);
-}
-
-// ── Session cleanup — evict sessions older than 24h ─────────────────
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-setInterval(() => {
-  const now = Date.now();
-  let cleaned = 0;
-  for (const [id, state] of sessions) {
-    if (now - state.lastActivity > SESSION_TTL_MS) {
-      sessions.delete(id);
-      cleaned++;
-    }
-  }
-  if (cleaned > 0) {
-    console.error(`[chat] session cleanup: removed ${cleaned}, remaining ${sessions.size}`);
-  }
-}, 10 * 60 * 1000); // every 10 min
+// Re-export for tests and other modules
+export { getSession, saveSession, type SessionState };
 
 // ── Expand custom .md slash commands ───────────────────────────────
 export async function expandSlashCommand(
@@ -305,9 +266,9 @@ export async function handleMcp(ctx: CommandContext) {
 }
 
 export async function handleClear(ctx: CommandContext) {
-  // Delete session state from memory
+  // Delete session state from memory (and disk via session-store)
   if (ctx.sessionId) {
-    sessions.delete(ctx.sessionId);
+    deleteSession(ctx.sessionId);
     console.error(`[chat] cleared session state for ${ctx.sessionId}`);
   }
   ctx.sendEvent("assistant", { text: "Session cleared." });
@@ -410,7 +371,7 @@ router.post("/", async (req, res) => {
       const handler = BUILTIN_COMMANDS[cmdName.toLowerCase()];
       if (handler) {
         console.error(`[chat] built-in command: /${cmdName}`);
-        const session = getSession(sessionId);
+        const session = getSession(sessionId, DEFAULT_MODEL);
         try {
           await handler({ sendEvent: sendEventDirect, cwd, sessionId, session, args: cmdArgs });
         } catch (err: unknown) {
@@ -432,7 +393,7 @@ router.post("/", async (req, res) => {
   }
 
   // ── Send to SDK ────────────────────────────────────────────────
-  const session = getSession(sessionId);
+  const session = getSession(sessionId, DEFAULT_MODEL);
   const queryId = crypto.randomUUID();
   const abortController = new AbortController();
   activeAborts.set(queryId, abortController);
@@ -495,6 +456,7 @@ router.post("/", async (req, res) => {
         },
         permissionMode: session.permissionMode,
         model: session.model,
+        enableFileCheckpointing: true,
         includePartialMessages: true,
         abortController,
         canUseTool: (toolName, input, options) => {
@@ -650,6 +612,11 @@ router.post("/", async (req, res) => {
         }
 
         case "user": {
+          // Track user message UUIDs for file checkpointing
+          if (m.uuid && !m.isSynthetic) {
+            if (!session.checkpoints) session.checkpoints = [];
+            session.checkpoints.push(m.uuid);
+          }
           for (const block of m.message.content) {
             if (block.type === "tool_result") {
               let content = "";
@@ -703,6 +670,7 @@ router.post("/", async (req, res) => {
             contextTokens: session.contextTokens,
             contextWindow: session.contextWindow,
             sessionCostUsd: session.totalCostUsd,
+            checkpoints: session.checkpoints || [],
           });
           break;
         }
@@ -870,11 +838,31 @@ router.post("/reconnect", (req, res) => {
 });
 
 // ── POST /api/chat/abort — abort an active query ────────────────────
-router.post("/abort", (req, res) => {
-  const { queryId } = req.body as { queryId?: string };
+router.post("/abort", async (req, res) => {
+  const { queryId, graceful } = req.body as { queryId?: string; graceful?: boolean };
   if (!queryId) {
     res.status(400).json({ error: "queryId is required" });
     return;
+  }
+
+  // Graceful interrupt: try response.interrupt() first
+  if (graceful) {
+    // Find the session that owns this query via activeQueries
+    for (const [sessionId, q] of activeQueries) {
+      // Match by checking if this query's abort controller matches
+      if (activeAborts.has(queryId)) {
+        try {
+          await q.interrupt();
+          console.error(`[chat] graceful interrupt for query ${queryId} (session=${sessionId})`);
+          res.json({ ok: true, method: "interrupt" });
+          return;
+        } catch (err) {
+          console.error(`[chat] interrupt() failed, falling through to hard abort: ${err}`);
+          // Fall through to hard abort
+          break;
+        }
+      }
+    }
   }
 
   const controller = activeAborts.get(queryId);
@@ -883,16 +871,74 @@ router.post("/abort", (req, res) => {
     const runner = getRunnerByQueryId(queryId);
     if (runner && runner.status === "running") {
       runner.abort();
-      res.json({ ok: true });
+      res.json({ ok: true, method: "abort" });
       return;
     }
     res.status(404).json({ error: "Query not found or already finished" });
     return;
   }
 
-  console.error(`[chat] aborting query ${queryId}`);
+  console.error(`[chat] hard aborting query ${queryId}`);
   controller.abort();
-  res.json({ ok: true });
+  res.json({ ok: true, method: "abort" });
+});
+
+// ── POST /api/chat/rewind — rewind files to a previous checkpoint ───
+router.post("/rewind", async (req, res) => {
+  const { sessionId, checkpointIndex } = req.body as { sessionId?: string; checkpointIndex?: number };
+
+  if (!sessionId) {
+    res.status(400).json({ error: "sessionId is required" });
+    return;
+  }
+
+  const session = getSession(sessionId, DEFAULT_MODEL);
+  const checkpoints = session.checkpoints;
+  if (!checkpoints || checkpoints.length === 0) {
+    res.status(400).json({ error: "No checkpoints available" });
+    return;
+  }
+
+  // Default: rewind to last checkpoint; or use specific index
+  const targetIdx = checkpointIndex !== undefined ? checkpointIndex : checkpoints.length - 1;
+  if (targetIdx < 0 || targetIdx >= checkpoints.length) {
+    res.status(400).json({ error: `Invalid checkpoint index: ${targetIdx}` });
+    return;
+  }
+
+  const targetUuid = checkpoints[targetIdx];
+
+  // Need an active query to call rewindFiles
+  const activeQuery = activeQueries.get(sessionId);
+  if (!activeQuery) {
+    res.status(400).json({ error: "No active query — rewind requires an active SDK session" });
+    return;
+  }
+
+  try {
+    const result = await activeQuery.rewindFiles(targetUuid);
+    if (result.canRewind) {
+      // Truncate checkpoints to remove entries after the rewind target
+      session.checkpoints = checkpoints.slice(0, targetIdx);
+      saveSession(sessionId, session);
+      console.error(`[chat] rewind to checkpoint ${targetIdx} (uuid=${targetUuid}): ${result.filesChanged?.length || 0} files changed`);
+      res.json({
+        ok: true,
+        checkpointIndex: targetIdx,
+        uuid: targetUuid,
+        remainingCheckpoints: session.checkpoints.length,
+        filesChanged: result.filesChanged,
+        insertions: result.insertions,
+        deletions: result.deletions,
+      });
+    } else {
+      res.status(400).json({ error: result.error || "Cannot rewind to this checkpoint" });
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[chat] rewind failed: ${errMsg}`);
+    res.status(500).json({ error: errMsg });
+  }
 });
 
 // ── POST /api/chat/permission — respond to a permission request ─────
@@ -938,7 +984,7 @@ router.post("/mode", async (req, res) => {
   }
 
   const sdkMode = mode as "default" | "acceptEdits" | "plan";
-  const session = getSession(sessionId);
+  const session = getSession(sessionId, DEFAULT_MODEL);
   session.permissionMode = sdkMode;
   if (sessionId) saveSession(sessionId, session);
 
@@ -960,7 +1006,7 @@ router.post("/mode", async (req, res) => {
 // ── Stats for observability ──────────────────────────────────────────
 export function getChatStats() {
   return {
-    sessions: sessions.size,
+    sessions: getSessionCount(),
     activeAborts: activeAborts.size,
     activeQueries: activeQueries.size,
     pendingPermissions: pendingPermissions.size,

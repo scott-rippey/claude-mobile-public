@@ -6,6 +6,7 @@ import filesRouter from "./routes/files.js";
 import fileRouter from "./routes/file.js";
 import chatRouter, { getChatStats } from "./routes/chat.js";
 import terminalRouter from "./routes/terminal.js";
+import { loadFromDisk, cleanupStaleSessions } from "./session-store.js";
 
 // ── Global error handlers — prevent silent crashes ──────────────────
 process.on("unhandledRejection", (reason) => {
@@ -33,13 +34,17 @@ app.use("/api/file", fileRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/terminal", terminalRouter);
 
+// ── Load persisted sessions, then start server ──────────────────────
+await loadFromDisk();
+
 app.listen(port, () => {
   console.error(`CC Server running on http://localhost:${port}`);
   console.error(`Base directory: ${process.env.BASE_DIR}`);
 });
 
-// ── Periodic resource logging — diagnose leaks and stuck queries ────
+// ── Periodic resource logging + session cleanup ─────────────────────
 setInterval(() => {
   const stats = getChatStats();
   console.error(`[server] resources: sessions=${stats.sessions} activeAborts=${stats.activeAborts} pendingPermissions=${stats.pendingPermissions}`);
+  cleanupStaleSessions();
 }, 60_000);
