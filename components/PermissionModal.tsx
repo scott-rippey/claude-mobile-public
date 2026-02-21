@@ -60,7 +60,7 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
-      <div className="w-full max-w-lg max-h-[85vh] flex flex-col bg-card border border-border rounded-t-2xl sm:rounded-2xl p-5 pb-8 sm:pb-5 mx-0 sm:mx-4 animate-in slide-in-from-bottom duration-200">
+      <div className="w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden bg-card border border-border rounded-t-2xl sm:rounded-2xl p-5 pb-8 sm:pb-5 mx-0 sm:mx-4 animate-in slide-in-from-bottom duration-200">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4 shrink-0">
           <div className="flex items-center justify-center w-9 h-9 rounded-full bg-yellow-500/15 text-yellow-500">
@@ -82,7 +82,7 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
 
         {/* Detail — scrollable area that shrinks to fit viewport */}
         {detail && (
-          <div className="bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5 min-h-0 overflow-y-scroll overscroll-contain" style={{ WebkitOverflowScrolling: "touch" }}>
+          <div className="flex-1 min-h-0 bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5 overflow-y-scroll overscroll-contain" style={{ WebkitOverflowScrolling: "touch" }}>
             <code className="text-xs text-foreground/80 whitespace-pre-wrap break-words">{detail}</code>
           </div>
         )}
