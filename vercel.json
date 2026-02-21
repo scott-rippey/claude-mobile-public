@@ -1,7 +1,8 @@
 {
   "git": {
     "deploymentEnabled": {
-      "sandbox/*": false
+      "sandbox/*": false,
+      "dev": true
     }
   }
 }
