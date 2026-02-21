@@ -82,8 +82,8 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
 
         {/* Detail — scrollable area that shrinks to fit viewport */}
         {detail && (
-          <div className="bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5 min-h-0 overflow-y-auto overflow-x-auto">
-            <code className="text-xs text-foreground/80 whitespace-pre-wrap break-all">{detail}</code>
+          <div className="bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5 min-h-0 overflow-y-scroll overscroll-contain" style={{ WebkitOverflowScrolling: "touch" }}>
+            <code className="text-xs text-foreground/80 whitespace-pre-wrap break-words">{detail}</code>
           </div>
         )}
 
