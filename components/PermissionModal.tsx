@@ -82,8 +82,11 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
 
         {/* Detail — scrollable area that shrinks to fit viewport */}
         {detail && (
-          <div className="bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5 max-h-[40vh] sm:max-h-[60vh] overflow-y-auto overscroll-contain">
-            <code className="text-xs text-foreground/80 whitespace-pre-wrap break-words">{detail}</code>
+          <div
+            className="bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5 overflow-y-auto overscroll-contain"
+            style={{ maxHeight: "min(40vh, 300px)" }}
+          >
+            <code className="text-xs text-foreground/80 whitespace-pre-wrap break-words block">{detail}</code>
           </div>
         )}
 
