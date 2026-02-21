@@ -415,11 +415,11 @@ describe("Chat utility endpoint validation patterns", () => {
   });
 
   it("mode endpoint validates against allowed modes", () => {
-    // Valid modes: "default", "acceptEdits", "plan"
+    // Valid modes: "default", "acceptEdits", "plan", "bypassPermissions"
     // Invalid mode → 400
-    const validModes = ["default", "acceptEdits", "plan"];
+    const validModes = ["default", "acceptEdits", "plan", "bypassPermissions"];
     for (const mode of validModes) {
-      expect(["default", "acceptEdits", "plan"]).toContain(mode);
+      expect(["default", "acceptEdits", "plan", "bypassPermissions"]).toContain(mode);
     }
   });
 

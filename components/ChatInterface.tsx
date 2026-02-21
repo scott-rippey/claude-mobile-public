@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, Square, WifiOff, RotateCcw } from "lucide-react";
+import { Send, Plus, Square, WifiOff, RotateCcw, GitBranch } from "lucide-react";
 import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { PermissionModal } from "./PermissionModal";
 import type { ActivityState } from "./ActivityIndicator";
 import { StatusBar, type ConnectionState } from "./StatusBar";
-import { ModeSelector, type ChatMode } from "./ModeSelector";
+import type { ChatMode } from "./ModeSelector";
+import { ChatSettings } from "./ChatSettings";
 import { parseSSEStream, type SSEMessage } from "@/lib/stream-parser";
 
 interface MessageBlock {
@@ -148,6 +149,11 @@ export function ChatInterface({
 
   // ── Feature C: Checkpoint / rewind state ─────────────────────────
   const [checkpointCount, setCheckpointCount] = useState(0);
+
+  // ── Session settings (Batch 1) ──────────────────────────────────
+  const [sessionCost, setSessionCost] = useState(0);
+  const [budgetCapUsd, setBudgetCapUsd] = useState<number | null>(null);
+  const [maxTurns, setMaxTurns] = useState<number | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -365,6 +371,11 @@ export function ChatInterface({
         if (sid) {
           setSessionId(sid);
           localStorage.setItem(`cc-session-${projectPath}`, sid);
+        }
+        // Track session cost from result events
+        const sessionCostUsd = event.data.sessionCostUsd as number | undefined;
+        if (sessionCostUsd !== undefined) {
+          setSessionCost(sessionCostUsd);
         }
         // Feature C: track checkpoint count from result events
         const checkpoints = event.data.checkpoints as string[] | undefined;
@@ -658,6 +669,8 @@ export function ChatInterface({
           message: trimmed,
           sessionId,
           projectPath,
+          // Recovery: when sessionId is lost but chat has messages, try to continue
+          ...(!sessionId && messages.length > 0 ? { continue: true } : {}),
         }),
         signal: fetchAbort.signal,
       });
@@ -737,6 +750,9 @@ export function ChatInterface({
     setPermissionQueue([]);
     setChatMode("default");
     setCheckpointCount(0);
+    setSessionCost(0);
+    setBudgetCapUsd(null);
+    setMaxTurns(null);
     setIsInterrupting(false);
     if (interruptTimerRef.current) {
       clearTimeout(interruptTimerRef.current);
@@ -869,6 +885,64 @@ export function ChatInterface({
     }).catch(() => {});
   };
 
+  const handleSettingsChange = (settings: { budgetCapUsd?: number | null; maxTurns?: number | null }) => {
+    if (!sessionId) return;
+    if (settings.budgetCapUsd !== undefined) setBudgetCapUsd(settings.budgetCapUsd);
+    if (settings.maxTurns !== undefined) setMaxTurns(settings.maxTurns);
+    fetch("/api/chat/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, ...settings }),
+    }).catch(() => {});
+  };
+
+  const forkSession = async () => {
+    if (!sessionId || isStreaming) return;
+    // Send a message with forkSession: true to create a new session branch
+    const forkMessage = "/status"; // Lightweight message to trigger fork
+    const userMessage: MessageBlock = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: "*Forked session*",
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setIsStreaming(true);
+    streamingRef.current = true;
+
+    const assistantId = crypto.randomUUID();
+    assistantIdRef.current = assistantId;
+    setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", toolCalls: [] }]);
+    setActivityState("thinking");
+
+    const fetchAbort = new AbortController();
+    abortRef.current = fetchAbort;
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: forkMessage, sessionId, projectPath, forkSession: true }),
+        signal: fetchAbort.signal,
+      });
+      if (!res.ok || !res.body) throw new Error("Fork failed");
+      const reader = res.body.getReader();
+      for await (const event of parseSSEStream(reader)) {
+        if (event.type === "done") break;
+        handleSSEEvent(event, assistantId);
+      }
+    } catch {
+      // Fork failed silently
+    } finally {
+      setIsStreaming(false);
+      streamingRef.current = false;
+      abortRef.current = null;
+      assistantIdRef.current = null;
+      setActivityState(null);
+      streamedTextRef.current = false;
+      setPermissionQueue([]);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -895,6 +969,17 @@ export function ChatInterface({
               >
                 <RotateCcw size={14} />
                 Undo
+              </button>
+            )}
+            {/* Fork button — branch conversation */}
+            {sessionId && !isStreaming && (
+              <button
+                onClick={forkSession}
+                title="Fork this conversation"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors"
+              >
+                <GitBranch size={14} />
+                Fork
               </button>
             )}
             <button
@@ -999,9 +1084,16 @@ export function ChatInterface({
           />
         )}
 
-        <div className="flex items-center justify-between px-4 pt-2 pb-0">
-          <ModeSelector mode={chatMode} onChange={handleModeChange} disabled={isStreaming} />
-        </div>
+        <ChatSettings
+          mode={chatMode}
+          onModeChange={handleModeChange}
+          sessionId={sessionId}
+          sessionCost={sessionCost}
+          budgetCapUsd={budgetCapUsd}
+          maxTurns={maxTurns}
+          onSettingsChange={handleSettingsChange}
+          disabled={isStreaming}
+        />
         <div className="flex items-end gap-2 px-4 py-3">
           <textarea
             ref={inputRef}

@@ -275,7 +275,7 @@ export async function handleClear(ctx: CommandContext) {
 }
 
 export async function handleStatus(ctx: CommandContext) {
-  const { model, messageCount, contextTokens, contextWindow } = ctx.session;
+  const { model, messageCount, contextTokens, contextWindow, totalCostUsd, budgetCapUsd, maxTurns, maxThinkingTokens, permissionMode, accountInfo } = ctx.session;
   const init = ctx.session.lastInit;
   const pct = contextWindow > 0 ? ((contextTokens / contextWindow) * 100).toFixed(0) : "?";
   const remaining = contextWindow > 0 ? ((contextWindow - contextTokens) / 1000).toFixed(0) : "?";
@@ -283,12 +283,23 @@ export async function handleStatus(ctx: CommandContext) {
   let text = "## Session Status\n\n";
   text += `- **Context:** ${pct}% used (${remaining}k remaining)\n`;
   text += `- **Model:** ${model}\n`;
+  text += `- **Mode:** ${permissionMode}\n`;
   text += `- **Messages:** ${messageCount}\n`;
+  text += `- **Cost:** $${totalCostUsd.toFixed(4)}${budgetCapUsd ? ` / $${budgetCapUsd} cap` : ""}\n`;
+  if (maxTurns) text += `- **Turn limit:** ${maxTurns}\n`;
+  if (maxThinkingTokens) text += `- **Thinking budget:** ${maxThinkingTokens} tokens\n`;
   text += `- **Session ID:** ${ctx.sessionId || "none (new session)"}\n`;
   text += `- **Working directory:** \`${ctx.cwd}\`\n`;
 
+  if (accountInfo) {
+    text += "\n### Account\n";
+    if (accountInfo.email) text += `- **Email:** ${accountInfo.email}\n`;
+    if (accountInfo.organization) text += `- **Organization:** ${accountInfo.organization}\n`;
+    if (accountInfo.subscriptionType) text += `- **Plan:** ${accountInfo.subscriptionType}\n`;
+  }
+
   if (init) {
-    text += `- **Claude Code version:** ${init.claudeCodeVersion}\n`;
+    text += `\n- **Claude Code version:** ${init.claudeCodeVersion}\n`;
     text += `- **Tools:** ${init.tools?.length || 0}\n`;
     text += `- **MCP Servers:** ${init.mcpServers?.length || 0}\n`;
     text += `- **Skills:** ${init.skills?.length || 0}\n`;
@@ -339,7 +350,7 @@ function subscribeResponse(
 // ── POST /api/chat — SSE streaming response ────────────────────────
 router.post("/", async (req, res) => {
   const baseDir = process.env.BASE_DIR!;
-  const { message, sessionId, projectPath } = req.body as ChatRequest;
+  const { message, sessionId, projectPath, continue: continueSession, forkSession, outputFormat } = req.body as ChatRequest;
 
   if (!message || !projectPath) {
     res.status(400).json({ error: "message and projectPath are required" });
@@ -438,11 +449,25 @@ router.post("/", async (req, res) => {
 
     sendEvent("query_start", { queryId });
 
+    // Build session resume/continue/fork options
+    const sessionOptions: Record<string, unknown> = {};
+    if (sessionId) {
+      sessionOptions.resume = sessionId;
+      if (forkSession) sessionOptions.forkSession = true;
+    } else if (continueSession) {
+      sessionOptions.continue = true;
+    }
+
+    // Compute remaining budget for this query
+    const remainingBudget = session.budgetCapUsd
+      ? Math.max(0, session.budgetCapUsd - session.totalCostUsd)
+      : undefined;
+
     const response = query({
       prompt,
       options: {
         cwd,
-        ...(sessionId ? { resume: sessionId } : {}),
+        ...sessionOptions,
         systemPrompt: {
           type: "preset" as const,
           preset: "claude_code" as const,
@@ -455,8 +480,13 @@ router.post("/", async (req, res) => {
           },
         },
         permissionMode: session.permissionMode,
+        ...(session.permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
         model: session.model,
         enableFileCheckpointing: true,
+        ...(remainingBudget !== undefined ? { maxBudgetUsd: remainingBudget } : {}),
+        ...(session.maxTurns ? { maxTurns: session.maxTurns } : {}),
+        ...(session.maxThinkingTokens ? { maxThinkingTokens: session.maxThinkingTokens } : {}),
+        ...(outputFormat ? { outputFormat } : {}),
         includePartialMessages: true,
         abortController,
         canUseTool: (toolName, input, options) => {
@@ -509,6 +539,25 @@ router.post("/", async (req, res) => {
             });
           });
         },
+        hooks: {
+          PreToolUse: [{
+            hooks: [async (input) => {
+              sendEvent("hook_pre_tool_use", {
+                toolName: input.hook_event_name === "PreToolUse" ? (input as any).tool_name : undefined,
+                toolInput: input.hook_event_name === "PreToolUse" ? (input as any).tool_input : undefined,
+              });
+              return { continue: true };
+            }],
+          }],
+          PostToolUse: [{
+            hooks: [async (input) => {
+              sendEvent("hook_post_tool_use", {
+                toolName: input.hook_event_name === "PostToolUse" ? (input as any).tool_name : undefined,
+              });
+              return { continue: true };
+            }],
+          }],
+        },
         stderr: (data: string) => console.error(`[chat][stderr] ${data}`),
       },
     });
@@ -518,9 +567,10 @@ router.post("/", async (req, res) => {
     // Fetch SDK metadata after init (non-blocking)
     const fetchSdkMetadata = async () => {
       try {
-        const [models, mcpStatus] = await Promise.all([
+        const [models, mcpStatus, acctInfo] = await Promise.all([
           response.supportedModels().catch(() => null),
           response.mcpServerStatus().catch(() => null),
+          response.accountInfo().catch(() => null),
         ]);
         if (models) {
           session.supportedModels = (models as any[]).map((m: any) => ({
@@ -532,6 +582,10 @@ router.post("/", async (req, res) => {
         }
         if (mcpStatus) {
           sendEvent("mcp_status", { servers: mcpStatus });
+        }
+        if (acctInfo) {
+          session.accountInfo = acctInfo as SessionState["accountInfo"];
+          sendEvent("account_info", { accountInfo: acctInfo });
         }
       } catch {
         // Non-critical — metadata fetch failed
@@ -552,6 +606,11 @@ router.post("/", async (req, res) => {
             // Update runner's sessionId mapping now that we have the real one
             if (m.session_id && m.session_id !== runner.sessionId) {
               updateRunnerSessionId(queryId, runner.sessionId, m.session_id);
+            }
+
+            // Track fork lineage
+            if (forkSession && sessionId && m.session_id !== sessionId) {
+              session.forkedFrom = sessionId;
             }
 
             // Track init data in session state
@@ -973,17 +1032,17 @@ router.post("/permission", (req, res) => {
 });
 
 // ── POST /api/chat/mode — change permission mode mid-session ─────────
-const VALID_MODES = new Set(["default", "acceptEdits", "plan"]);
+const VALID_MODES = new Set(["default", "acceptEdits", "plan", "bypassPermissions"]);
 
 router.post("/mode", async (req, res) => {
   const { sessionId, mode } = req.body as { sessionId?: string; mode?: string };
 
   if (!mode || !VALID_MODES.has(mode)) {
-    res.status(400).json({ error: "mode must be one of: default, acceptEdits, plan" });
+    res.status(400).json({ error: `mode must be one of: ${[...VALID_MODES].join(", ")}` });
     return;
   }
 
-  const sdkMode = mode as "default" | "acceptEdits" | "plan";
+  const sdkMode = mode as SessionState["permissionMode"];
   const session = getSession(sessionId, DEFAULT_MODEL);
   session.permissionMode = sdkMode;
   if (sessionId) saveSession(sessionId, session);
@@ -1001,6 +1060,121 @@ router.post("/mode", async (req, res) => {
   }
 
   res.json({ ok: true, mode: sdkMode });
+});
+
+// ── POST /api/chat/settings — update session settings ────────────────
+router.post("/settings", (req, res) => {
+  const { sessionId, budgetCapUsd, maxTurns, maxThinkingTokens } = req.body as {
+    sessionId?: string;
+    budgetCapUsd?: number | null;
+    maxTurns?: number | null;
+    maxThinkingTokens?: number | null;
+  };
+
+  if (!sessionId) {
+    res.status(400).json({ error: "sessionId is required" });
+    return;
+  }
+
+  const session = getSession(sessionId, DEFAULT_MODEL);
+
+  if (budgetCapUsd !== undefined) {
+    session.budgetCapUsd = budgetCapUsd === null ? undefined : budgetCapUsd;
+  }
+  if (maxTurns !== undefined) {
+    session.maxTurns = maxTurns === null ? undefined : maxTurns;
+  }
+  if (maxThinkingTokens !== undefined) {
+    session.maxThinkingTokens = maxThinkingTokens === null ? undefined : maxThinkingTokens;
+  }
+
+  saveSession(sessionId, session);
+  console.error(`[chat] settings updated for ${sessionId}: budget=${session.budgetCapUsd} turns=${session.maxTurns} thinking=${session.maxThinkingTokens}`);
+
+  res.json({
+    ok: true,
+    budgetCapUsd: session.budgetCapUsd ?? null,
+    maxTurns: session.maxTurns ?? null,
+    maxThinkingTokens: session.maxThinkingTokens ?? null,
+  });
+});
+
+// ── POST /api/chat/model — change model mid-query ────────────────────
+router.post("/model", async (req, res) => {
+  const { sessionId, model } = req.body as { sessionId?: string; model?: string };
+
+  if (!model) {
+    res.status(400).json({ error: "model is required" });
+    return;
+  }
+
+  const session = getSession(sessionId, DEFAULT_MODEL);
+  session.model = model;
+  if (sessionId) saveSession(sessionId, session);
+
+  // If there's an active query, change model immediately
+  if (sessionId && activeQueries.has(sessionId)) {
+    try {
+      await activeQueries.get(sessionId)!.setModel(model);
+      console.error(`[chat] model changed to ${model} (live, sessionId=${sessionId})`);
+      res.json({ ok: true, model, live: true });
+      return;
+    } catch (err) {
+      console.error(`[chat] setModel failed: ${err}`);
+    }
+  }
+
+  console.error(`[chat] model changed to ${model} (next query, sessionId=${sessionId || "none"})`);
+  res.json({ ok: true, model, live: false });
+});
+
+// ── POST /api/chat/thinking — set thinking budget mid-query ──────────
+router.post("/thinking", async (req, res) => {
+  const { sessionId, maxThinkingTokens } = req.body as { sessionId?: string; maxThinkingTokens?: number | null };
+
+  const session = getSession(sessionId, DEFAULT_MODEL);
+  session.maxThinkingTokens = maxThinkingTokens === null ? undefined : maxThinkingTokens ?? undefined;
+  if (sessionId) saveSession(sessionId, session);
+
+  // If there's an active query, change thinking budget immediately
+  if (sessionId && activeQueries.has(sessionId)) {
+    try {
+      await activeQueries.get(sessionId)!.setMaxThinkingTokens(maxThinkingTokens ?? null);
+      console.error(`[chat] thinking budget changed to ${maxThinkingTokens} (live, sessionId=${sessionId})`);
+      res.json({ ok: true, maxThinkingTokens: maxThinkingTokens ?? null, live: true });
+      return;
+    } catch (err) {
+      console.error(`[chat] setMaxThinkingTokens failed: ${err}`);
+    }
+  }
+
+  console.error(`[chat] thinking budget changed to ${maxThinkingTokens} (next query, sessionId=${sessionId || "none"})`);
+  res.json({ ok: true, maxThinkingTokens: maxThinkingTokens ?? null, live: false });
+});
+
+// ── POST /api/chat/mcp-servers — dynamic MCP server management ──────
+router.post("/mcp-servers", async (req, res) => {
+  const { sessionId, servers } = req.body as { sessionId?: string; servers?: Record<string, unknown> };
+
+  if (!servers || typeof servers !== "object") {
+    res.status(400).json({ error: "servers object is required" });
+    return;
+  }
+
+  if (!sessionId || !activeQueries.has(sessionId)) {
+    res.status(400).json({ error: "No active query — MCP server changes require an active session" });
+    return;
+  }
+
+  try {
+    const result = await activeQueries.get(sessionId)!.setMcpServers(servers as any);
+    console.error(`[chat] MCP servers updated: added=${result.added.join(",")} removed=${result.removed.join(",")}`);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[chat] setMcpServers failed: ${errMsg}`);
+    res.status(500).json({ error: errMsg });
+  }
 });
 
 // ── Stats for observability ──────────────────────────────────────────

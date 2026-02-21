@@ -20,6 +20,9 @@ export interface ChatRequest {
   message: string;
   sessionId?: string;
   projectPath: string;
+  continue?: boolean;    // Resume most recent conversation
+  forkSession?: boolean; // Fork to new session branch
+  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
 }
 
 // SSE event types sent to the client

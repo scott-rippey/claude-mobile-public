@@ -18,7 +18,7 @@ import { fileURLToPath } from "url";
 
 export interface SessionState {
   model: string;
-  permissionMode: "default" | "acceptEdits" | "plan";
+  permissionMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   totalCostUsd: number;
   messageCount: number;
   contextTokens: number;   // Last input_tokens (current context size)
@@ -26,8 +26,19 @@ export interface SessionState {
   lastActivity: number;    // timestamp for TTL cleanup
   checkpoints?: string[];  // User message UUIDs for file checkpointing
 
+  // Query controls (Batch 1)
+  budgetCapUsd?: number;   // Per-session budget cap
+  maxTurns?: number;       // Max agentic turns per query
+
+  // Mid-query controls (Batch 3)
+  maxThinkingTokens?: number;  // Thinking budget cap
+
+  // Session features (Batch 4)
+  forkedFrom?: string;     // Parent session ID when forked
+
   // Bulky — not persisted, repopulated on next message
   supportedModels?: { id: string; name?: string }[];
+  accountInfo?: { email?: string; organization?: string; subscriptionType?: string; tokenSource?: string; apiKeySource?: string };
   lastInit?: {
     tools: string[];
     mcpServers: { name: string; status: string }[];
@@ -40,9 +51,9 @@ export interface SessionState {
 }
 
 // Fields to strip before writing to disk (bulky, repopulated on next message)
-const EPHEMERAL_FIELDS: (keyof SessionState)[] = ["supportedModels", "lastInit"];
+const EPHEMERAL_FIELDS: (keyof SessionState)[] = ["supportedModels", "lastInit", "accountInfo"];
 
-type PersistedSessionState = Omit<SessionState, "supportedModels" | "lastInit">;
+type PersistedSessionState = Omit<SessionState, "supportedModels" | "lastInit" | "accountInfo">;
 
 // ── Storage path ──────────────────────────────────────────────────────
 
