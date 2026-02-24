@@ -62,22 +62,30 @@ function getToolIcon(toolName: string) {
 function PermissionModalContent({ request, onAllow, onDeny }: PermissionModalProps) {
   const { label, detail } = formatToolDisplay(request.toolName, request.input);
   const detailRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const [debugInfo, setDebugInfo] = useState("");
 
   useEffect(() => {
-    if (detailRef.current) {
-      const el = detailRef.current;
+    const el = detailRef.current;
+    const card = cardRef.current;
+    if (el) {
+      const cardH = card ? card.clientHeight : 0;
+      const cs = window.getComputedStyle(el);
       setDebugInfo(
-        `scroll:${el.scrollHeight} client:${el.clientHeight} overflow:${el.scrollHeight > el.clientHeight} chars:${detail?.length ?? 0} keys:[${Object.keys(request.input).join(",")}]`
+        `scroll:${el.scrollHeight} client:${el.clientHeight} overflow:${el.scrollHeight > el.clientHeight} chars:${detail?.length ?? 0} cardH:${cardH} overflowY:${cs.overflowY} maxH:${cs.maxHeight} keys:[${Object.keys(request.input).join(",")}]`
       );
     }
   }, [detail, request.input]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
-      <div className="w-full max-w-lg max-h-[85vh] flex flex-col bg-card border border-border rounded-t-2xl sm:rounded-2xl p-5 pb-8 sm:pb-5 mx-0 sm:mx-4 animate-in slide-in-from-bottom duration-200">
+      <div
+        className="w-full max-w-lg bg-card border border-border rounded-t-2xl sm:rounded-2xl p-5 pb-8 sm:pb-5 mx-0 sm:mx-4 animate-in slide-in-from-bottom duration-200"
+        ref={cardRef}
+        style={{ maxHeight: "85vh", display: "flex", flexDirection: "column" }}
+      >
         {/* Header */}
-        <div className="flex items-center gap-3 mb-4 shrink-0">
+        <div className="flex items-center gap-3 mb-4" style={{ flexShrink: 0 }}>
           <div className="flex items-center justify-center w-9 h-9 rounded-full bg-yellow-500/15 text-yellow-500">
             {getToolIcon(request.toolName)}
           </div>
@@ -104,14 +112,15 @@ function PermissionModalContent({ request, onAllow, onDeny }: PermissionModalPro
         {detail && (
           <div
             ref={detailRef}
-            className="min-h-0 overflow-y-auto overscroll-contain touch-pan-y bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5"
+            className="bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5"
+            style={{ minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
           >
             <code className="text-xs text-foreground/80 whitespace-pre-wrap break-words block">{detail}</code>
           </div>
         )}
 
         {/* Action buttons — large tap targets for mobile */}
-        <div className="flex gap-3 shrink-0">
+        <div className="flex gap-3" style={{ flexShrink: 0 }}>
           <button
             onClick={() => onDeny(request.requestId)}
             className="flex-1 py-3.5 text-sm font-medium text-muted border border-border rounded-xl hover:bg-card hover:text-foreground active:bg-border transition-colors"
