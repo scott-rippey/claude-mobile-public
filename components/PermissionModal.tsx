@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Shield, Terminal, FileEdit, X } from "lucide-react";
 
 interface PermissionRequest {
@@ -57,8 +59,19 @@ function getToolIcon(toolName: string) {
   return <Shield size={18} />;
 }
 
-export function PermissionModal({ request, onAllow, onDeny }: PermissionModalProps) {
+function PermissionModalContent({ request, onAllow, onDeny }: PermissionModalProps) {
   const { label, detail } = formatToolDisplay(request.toolName, request.input);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const [debugInfo, setDebugInfo] = useState("");
+
+  useEffect(() => {
+    if (detailRef.current) {
+      const el = detailRef.current;
+      setDebugInfo(
+        `scroll:${el.scrollHeight} client:${el.clientHeight} overflow:${el.scrollHeight > el.clientHeight} chars:${detail?.length ?? 0} keys:[${Object.keys(request.input).join(",")}]`
+      );
+    }
+  }, [detail, request.input]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
@@ -82,9 +95,17 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
           </button>
         </div>
 
+        {/* Debug info — TEMPORARY */}
+        {debugInfo && (
+          <div className="text-[10px] text-yellow-500 font-mono mb-2 shrink-0">{debugInfo}</div>
+        )}
+
         {/* Detail — scrollable, flex-shrinks to fit between header and buttons */}
         {detail && (
-          <div className="min-h-0 overflow-y-auto overscroll-contain touch-pan-y bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5">
+          <div
+            ref={detailRef}
+            className="min-h-0 overflow-y-auto overscroll-contain touch-pan-y bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5"
+          >
             <code className="text-xs text-foreground/80 whitespace-pre-wrap break-words block">{detail}</code>
           </div>
         )}
@@ -107,4 +128,16 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
       </div>
     </div>
   );
+}
+
+/**
+ * Portal wrapper — renders modal at document.body level to escape
+ * ancestor overflow:hidden containers that can break iOS Safari touch scrolling.
+ */
+export function PermissionModal(props: PermissionModalProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) return null;
+  return createPortal(<PermissionModalContent {...props} />, document.body);
 }
