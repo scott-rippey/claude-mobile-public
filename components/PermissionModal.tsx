@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Shield, Terminal, FileEdit, X } from "lucide-react";
 
@@ -61,27 +61,12 @@ function getToolIcon(toolName: string) {
 
 function PermissionModalContent({ request, onAllow, onDeny }: PermissionModalProps) {
   const { label, detail } = formatToolDisplay(request.toolName, request.input);
-  const detailRef = useRef<HTMLDivElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [debugInfo, setDebugInfo] = useState("");
-
-  useEffect(() => {
-    const el = detailRef.current;
-    const card = cardRef.current;
-    if (el) {
-      const cardH = card ? card.clientHeight : 0;
-      const cs = window.getComputedStyle(el);
-      setDebugInfo(
-        `scroll:${el.scrollHeight} client:${el.clientHeight} overflow:${el.scrollHeight > el.clientHeight} chars:${detail?.length ?? 0} cardH:${cardH} overflowY:${cs.overflowY} maxH:${cs.maxHeight} keys:[${Object.keys(request.input).join(",")}]`
-      );
-    }
-  }, [detail, request.input]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60">
+      {/* Card — inline styles for maxHeight/flex because Tailwind v4 wasn't applying them */}
       <div
         className="w-full max-w-lg bg-card border border-border rounded-t-2xl sm:rounded-2xl p-5 pb-8 sm:pb-5 mx-0 sm:mx-4 animate-in slide-in-from-bottom duration-200"
-        ref={cardRef}
         style={{ maxHeight: "85vh", display: "flex", flexDirection: "column" }}
       >
         {/* Header */}
@@ -103,17 +88,11 @@ function PermissionModalContent({ request, onAllow, onDeny }: PermissionModalPro
           </button>
         </div>
 
-        {/* Debug info — TEMPORARY */}
-        {debugInfo && (
-          <div className="text-[10px] text-yellow-500 font-mono mb-2 shrink-0">{debugInfo}</div>
-        )}
-
-        {/* Detail — scrollable, flex-shrinks to fit between header and buttons */}
+        {/* Detail — scrollable, shrinks to fit between header and buttons */}
         {detail && (
           <div
-            ref={detailRef}
             className="bg-[#0a0a0a] border border-border rounded-lg px-3 py-2.5 mb-5"
-            style={{ minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
+            style={{ minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}
           >
             <code className="text-xs text-foreground/80 whitespace-pre-wrap break-words block">{detail}</code>
           </div>
@@ -141,7 +120,7 @@ function PermissionModalContent({ request, onAllow, onDeny }: PermissionModalPro
 
 /**
  * Portal wrapper — renders modal at document.body level to escape
- * ancestor overflow:hidden containers that can break iOS Safari touch scrolling.
+ * ancestor overflow:hidden containers that can break touch scrolling.
  */
 export function PermissionModal(props: PermissionModalProps) {
   const [mounted, setMounted] = useState(false);
