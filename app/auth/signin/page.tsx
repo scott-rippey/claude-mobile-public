@@ -2,7 +2,7 @@
 
 import { signIn } from "next-auth/react";
 import { markAuthValid } from "@/components/AuthGuard";
-import { ClaudeLogo } from "@/components/ClaudeLogo";
+import { AnvilLogo } from "@/components/ClaudeLogo";
 
 export default function SignInPage() {
   return (
@@ -10,9 +10,9 @@ export default function SignInPage() {
       <div className="w-full max-w-sm text-center space-y-8">
         <div className="space-y-3">
           <div className="flex justify-center">
-            <ClaudeLogo size={48} className="text-accent" />
+            <AnvilLogo size={48} className="text-accent" />
           </div>
-          <h1 className="text-2xl font-bold">Claude Code Mobile</h1>
+          <h1 className="text-2xl font-bold">Code Anvil Mobile</h1>
           <p className="text-sm text-muted">
             Remote Claude Code from your phone
           </p>

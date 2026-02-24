@@ -1,8 +1,8 @@
-# Claude Code Mobile
+# Code Anvil Mobile
 
 **v1.2.0**
 
-Access Claude Code from your phone. Full Claude Agent SDK with file browsing, chat, terminal, and real-time streaming — all through a mobile-friendly web interface.
+A mobile-friendly web interface for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview). Access your local Claude Code CLI from your phone — full Agent SDK with file browsing, chat, terminal, and real-time streaming.
 
 ## Features
 

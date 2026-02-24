@@ -1,6 +1,6 @@
-# Claude Code Mobile
+# Code Anvil Mobile
 
-Remote Claude Code interface — access Claude Code from your phone via your Max plan subscription.
+Remote [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) interface — access Claude Code from your phone via your Max plan subscription.
 
 ## How It Works
 
@@ -20,7 +20,7 @@ Phone → Vercel (Next.js + Google Auth)
 - **NextAuth** with Google OAuth (only authorized users)
 - **API routes** (`app/api/`) proxy requests to cc-server through Cloudflare Tunnel
 - **Pages:** File browser, file viewer, chat interface, project workspace (tabbed: browse/file/chat/terminal/help)
-- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage, StatusBar, ClaudeLogo, ChatSettings, ModeSelector
+- **Components:** `components/` — FileBrowser, FileViewer, ChatInterface, Terminal, ProjectWorkspace, LogoutButton, AuthGuard, CodeBlock, StreamingMessage, StatusBar, AnvilLogo, ChatSettings, ModeSelector
 
 ### Backend (`cc-server/` — runs on your server machine)
 - **Express** server on port 3020

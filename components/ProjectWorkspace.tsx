@@ -139,7 +139,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
         <div className={`absolute inset-0 overflow-y-auto ${activeTab !== "help" ? "hidden" : ""}`}>
           <div className="px-4 py-5 max-w-lg mx-auto space-y-6 text-sm">
             <section>
-              <h2 className="text-base font-semibold text-foreground mb-2">Claude Code Mobile</h2>
+              <h2 className="text-base font-semibold text-foreground mb-2">Code Anvil Mobile</h2>
               <p className="text-muted leading-relaxed">
                 Remote interface to Claude Code running on your local computer. Chat with Claude, browse files, and run terminal commands — all from your phone.
               </p>

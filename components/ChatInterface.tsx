@@ -957,7 +957,7 @@ export function ChatInterface({
         <header className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <div className="min-w-0">
             <h1 className="text-sm font-semibold truncate">{projectName}</h1>
-            <p className="text-xs text-muted truncate">Claude Code</p>
+            <p className="text-xs text-muted truncate">Code Anvil</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {/* Feature C: Undo button — visible when checkpoints exist and not streaming */}
@@ -993,6 +993,41 @@ export function ChatInterface({
         </header>
       )}
 
+      {/* Action bar — visible in embedded mode when session is active */}
+      {embedded && (sessionId || checkpointCount > 0) && !isStreaming && (
+        <div className="flex items-center justify-end gap-2 px-3 py-1.5 border-b border-border bg-card/50 shrink-0">
+          {checkpointCount > 0 && (
+            <button
+              onClick={rewindFiles}
+              title={`Undo last change (${checkpointCount} checkpoint${checkpointCount !== 1 ? "s" : ""})`}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-amber-500 hover:text-amber-400 border border-amber-500/30 rounded-md hover:bg-amber-500/10 transition-colors"
+            >
+              <RotateCcw size={13} />
+              Undo
+            </button>
+          )}
+          {sessionId && (
+            <button
+              onClick={forkSession}
+              title="Fork this conversation"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors"
+            >
+              <GitBranch size={13} />
+              Fork
+            </button>
+          )}
+          {sessionId && (
+            <button
+              onClick={startNewConversation}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors"
+            >
+              <Plus size={13} />
+              New
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Offline banner */}
       {isOffline && (
         <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 text-yellow-500 text-xs shrink-0">
@@ -1005,7 +1040,7 @@ export function ChatInterface({
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-muted text-sm">
-            <p>Start a conversation with Claude Code</p>
+            <p>Start a conversation with Code Anvil</p>
             <p className="text-xs mt-1">Project: {projectPath}</p>
           </div>
         )}
@@ -1100,7 +1135,7 @@ export function ChatInterface({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message Claude Code..."
+            placeholder="Message Code Anvil..."
             rows={1}
             className="flex-1 bg-card border border-border rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-accent placeholder:text-muted/60"
             style={{ maxHeight: "120px" }}

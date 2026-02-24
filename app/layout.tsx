@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Claude Code Mobile",
+  title: "Code Anvil Mobile",
   description: "Remote Claude Code interface for mobile",
 };
 
