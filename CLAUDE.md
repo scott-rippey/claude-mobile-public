@@ -39,7 +39,7 @@ Phone → Vercel (Next.js + Google Auth)
   - `/api/chat/reconnect` (SSE) — replay + subscribe to running query
   - `/api/terminal` (SSE streaming), `/api/terminal/status`, `/api/terminal/reconnect` (SSE)
 - **Claude Agent SDK** integration for chat with `settingSources: ["project", "user"]` and `includePartialMessages: true` for token-by-token streaming
-- **SDK features used:** `enableFileCheckpointing`, `maxBudgetUsd`, `maxTurns`, `maxThinkingTokens`, `continue`, `outputFormat`, `bypassPermissions`, `hooks` (PreToolUse, PostToolUse), `accountInfo()`, `supportedModels()`, `mcpServerStatus()`, `interrupt()`, `setModel()`, `setMaxThinkingTokens()`, `setMcpServers()`, `setPermissionMode()`
+- **SDK features used:** `maxBudgetUsd`, `maxTurns`, `maxThinkingTokens`, `continue`, `outputFormat`, `bypassPermissions`, `hooks` (PreToolUse, PostToolUse), `accountInfo()`, `supportedModels()`, `mcpServerStatus()`, `interrupt()`, `setModel()`, `setMaxThinkingTokens()`, `setMcpServers()`, `setPermissionMode()`
 - **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
 - **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
 - **Session persistence** via `session-store.ts` — debounced disk writes, loaded on startup, SIGTERM/SIGINT flush
@@ -54,21 +54,6 @@ Phone → Vercel (Next.js + Google Auth)
 - `Start CC Server Local.command` starts server only (no tunnel) for local testing
 - NOT deployed to Vercel — this subfolder runs on your server machine (Mac, Linux, or WSL on Windows)
 - Has its own `package.json`, `tsconfig.json`, and `node_modules`
-
-### Session State Fields
-```
-model, permissionMode, totalCostUsd, messageCount, contextTokens, contextWindow,
-lastActivity, checkpoints[], budgetCapUsd?, maxTurns?, maxThinkingTokens?,
-forkedFrom?, supportedModels? (ephemeral), accountInfo? (ephemeral), lastInit? (ephemeral)
-```
-
-### SSE Event Types
-```
-query_start, init, assistant, tool_call, tool_result, tool_progress,
-stream_event, context_update, compact_boundary, system, result, error, done,
-permission_request, permission_warning, supported_models, mcp_status,
-account_info, hook_pre_tool_use, hook_post_tool_use, buffer_gap, reconnect_complete
-```
 
 ### Key Files
 - `cc-server/` — excluded from root `tsconfig.json` and `eslint.config.mjs`
@@ -97,17 +82,5 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 
 ## Environment Variables
 
-### Vercel (production)
-- `TUNNEL_URL` — Cloudflare Tunnel URL to your server (e.g. `https://api.yourdomain.com`)
-- `SHARED_SECRET` — shared auth token between Vercel and cc-server
-- `NEXTAUTH_SECRET` — NextAuth session encryption
-- `NEXTAUTH_URL` — Vercel app URL
-- `GOOGLE_CLIENT_ID` — Google OAuth client ID
-- `GOOGLE_CLIENT_SECRET` — Google OAuth client secret
-
-### cc-server (.env on server machine)
-- `SHARED_SECRET` — must match Vercel's value
-- `BASE_DIR` — root directory for file browsing and terminal (e.g. `/path/to/your/projects`)
-- `PORT` — defaults to 3020
-- `TUNNEL_TOKEN` — Cloudflare tunnel token (used by `Start CC Server.command`)
+See `.env.example` and `cc-server/.env.example` for variable names. See README for full setup guide.
 
