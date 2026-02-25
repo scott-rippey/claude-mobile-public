@@ -13,7 +13,7 @@ ORIGINAL_BRANCH=$(git branch --show-current)
 # Verify public remote exists
 if ! git remote get-url "$REMOTE" &>/dev/null; then
   echo "ERROR: Remote '$REMOTE' not found."
-  echo "Add it with: git remote add public https://github.com/scott-rippey/claude-mobile-public.git"
+  echo "Add it with: git remote add public https://github.com/scott-rippey/code-anvil-mobile-public.git"
   exit 1
 fi
 
