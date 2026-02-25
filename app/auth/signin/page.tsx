@@ -13,6 +13,15 @@ export default function SignInPage() {
             <AnvilLogo size={48} className="text-accent" />
           </div>
           <h1 className="text-2xl font-bold">Code Anvil Mobile</h1>
+          <span
+            className="inline-block text-[10px] font-mono font-medium tracking-wider uppercase"
+            style={{
+              color: "#4ade80",
+              textShadow: "0 0 6px rgba(74, 222, 128, 0.5), 0 0 12px rgba(74, 222, 128, 0.25)",
+            }}
+          >
+            v1.2.0
+          </span>
           <p className="text-sm text-muted">
             Remote Claude Code from your phone
           </p>
