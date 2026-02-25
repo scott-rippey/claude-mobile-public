@@ -32,6 +32,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
     return projectPath;
   });
   const [viewingFile, setViewingFile] = useState<string | null>(null);
+  const [browseRefreshKey, setBrowseRefreshKey] = useState(0);
 
   // Persist browse path to sessionStorage
   useEffect(() => {
@@ -115,6 +116,7 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
             onFileSelect={handleFileSelect}
             onNavigate={handleNavigate}
             onStartChat={() => setActiveTab("chat")}
+            refreshKey={browseRefreshKey}
           />
         </div>
 
@@ -231,7 +233,10 @@ export function ProjectWorkspace({ projectPath }: ProjectWorkspaceProps) {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                if (tab.id === "browse") setBrowseRefreshKey((k) => k + 1);
+              }}
               className={`flex-1 flex flex-col items-center gap-1 py-2.5 transition-colors ${
                 isActive
                   ? "text-accent"

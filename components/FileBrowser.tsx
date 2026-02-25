@@ -11,6 +11,7 @@ import {
   Loader2,
   Check,
   X,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -27,6 +28,7 @@ interface FileBrowserProps {
   onFileSelect?: (filePath: string) => void;
   onNavigate?: (dirPath: string) => void;
   onStartChat?: () => void;
+  refreshKey?: number;
 }
 
 const CODE_EXTENSIONS = new Set([
@@ -46,7 +48,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: FileBrowserProps) {
+export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat, refreshKey }: FileBrowserProps) {
   const router = useRouter();
   const isEmbedded = !!(onFileSelect || onNavigate);
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -88,7 +90,7 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
     fetchEntries(cancelled);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path]);
+  }, [path, refreshKey]);
 
   useEffect(() => {
     if (creatingFolder) {
@@ -153,15 +155,36 @@ export function FileBrowser({ path, onFileSelect, onNavigate, onStartChat }: Fil
         </Link>
       )}
 
-      {/* New Folder button — always at top, right below nav */}
+      {/* Toolbar — New Folder + Refresh */}
       {!isEmbedded && !loading && !error && !creatingFolder && (
-        <button
-          onClick={() => setCreatingFolder(true)}
-          className="flex items-center gap-2 px-4 py-2.5 mb-2 text-sm text-muted hover:text-foreground hover:bg-card rounded-lg transition-colors"
-        >
-          <FolderPlus size={18} />
-          <span>New Folder</span>
-        </button>
+        <div className="flex items-center gap-1 mb-2">
+          <button
+            onClick={() => setCreatingFolder(true)}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm text-muted hover:text-foreground hover:bg-card rounded-lg transition-colors"
+          >
+            <FolderPlus size={18} />
+            <span>New Folder</span>
+          </button>
+          <button
+            onClick={() => fetchEntries()}
+            title="Refresh"
+            className="p-2.5 text-muted hover:text-foreground hover:bg-card rounded-lg transition-colors ml-auto"
+          >
+            <RefreshCw size={16} />
+          </button>
+        </div>
+      )}
+      {/* Embedded refresh button */}
+      {isEmbedded && !loading && !error && (
+        <div className="flex justify-end px-2 py-1">
+          <button
+            onClick={() => fetchEntries()}
+            title="Refresh"
+            className="p-2 text-muted hover:text-foreground hover:bg-card rounded-lg transition-colors"
+          >
+            <RefreshCw size={14} />
+          </button>
+        </div>
       )}
 
       {/* New folder input form */}

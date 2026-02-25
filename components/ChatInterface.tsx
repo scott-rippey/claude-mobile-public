@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, Square, WifiOff, RotateCcw, GitBranch } from "lucide-react";
+import { Send, Plus, Square, WifiOff } from "lucide-react";
 import { StreamingMessage } from "./StreamingMessage";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { PermissionModal } from "./PermissionModal";
@@ -146,9 +146,6 @@ export function ChatInterface({
   // Second tap within 3s = hard abort
   const [isInterrupting, setIsInterrupting] = useState(false);
   const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ── Feature C: Checkpoint / rewind state ─────────────────────────
-  const [checkpointCount, setCheckpointCount] = useState(0);
 
   // ── Session settings (Batch 1) ──────────────────────────────────
   const [sessionCost, setSessionCost] = useState(0);
@@ -376,11 +373,6 @@ export function ChatInterface({
         const sessionCostUsd = event.data.sessionCostUsd as number | undefined;
         if (sessionCostUsd !== undefined) {
           setSessionCost(sessionCostUsd);
-        }
-        // Feature C: track checkpoint count from result events
-        const checkpoints = event.data.checkpoints as string[] | undefined;
-        if (checkpoints !== undefined) {
-          setCheckpointCount(checkpoints.length);
         }
         break;
       }
@@ -749,7 +741,6 @@ export function ChatInterface({
     setSessionStats(null);
     setPermissionQueue([]);
     setChatMode("default");
-    setCheckpointCount(0);
     setSessionCost(0);
     setBudgetCapUsd(null);
     setMaxTurns(null);
@@ -800,22 +791,6 @@ export function ChatInterface({
   };
 
   // Feature C: rewind files to last checkpoint
-  const rewindFiles = async () => {
-    const sid = sessionId;
-    if (!sid || checkpointCount === 0) return;
-    try {
-      await fetch("/api/chat/rewind", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sid }),
-      });
-      // Decrement checkpoint count (server will confirm new count on next result)
-      setCheckpointCount((prev) => Math.max(0, prev - 1));
-    } catch {
-      // Rewind failed silently — server logs the error
-    }
-  };
-
   // ── Smart retry: reconnect if query exists, resend only if truly gone ──
   const retryLastMessage = async () => {
     if (isStreaming) return;
@@ -896,52 +871,6 @@ export function ChatInterface({
     }).catch(() => {});
   };
 
-  const forkSession = async () => {
-    if (!sessionId || isStreaming) return;
-    // Send a message with forkSession: true to create a new session branch
-    const forkMessage = "/status"; // Lightweight message to trigger fork
-    const userMessage: MessageBlock = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: "*Forked session*",
-    };
-    setMessages((prev) => [...prev, userMessage]);
-    setIsStreaming(true);
-    streamingRef.current = true;
-
-    const assistantId = crypto.randomUUID();
-    assistantIdRef.current = assistantId;
-    setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", toolCalls: [] }]);
-    setActivityState("thinking");
-
-    const fetchAbort = new AbortController();
-    abortRef.current = fetchAbort;
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: forkMessage, sessionId, projectPath, forkSession: true }),
-        signal: fetchAbort.signal,
-      });
-      if (!res.ok || !res.body) throw new Error("Fork failed");
-      const reader = res.body.getReader();
-      for await (const event of parseSSEStream(reader)) {
-        if (event.type === "done") break;
-        handleSSEEvent(event, assistantId);
-      }
-    } catch {
-      // Fork failed silently
-    } finally {
-      setIsStreaming(false);
-      streamingRef.current = false;
-      abortRef.current = null;
-      assistantIdRef.current = null;
-      setActivityState(null);
-      streamedTextRef.current = false;
-      setPermissionQueue([]);
-    }
-  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -960,28 +889,6 @@ export function ChatInterface({
             <p className="text-xs text-muted truncate">Code Anvil</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {/* Feature C: Undo button — visible when checkpoints exist and not streaming */}
-            {checkpointCount > 0 && !isStreaming && (
-              <button
-                onClick={rewindFiles}
-                title={`Undo last change (${checkpointCount} checkpoint${checkpointCount !== 1 ? "s" : ""})`}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-500 hover:text-amber-400 border border-amber-500/30 rounded-md hover:bg-amber-500/10 transition-colors"
-              >
-                <RotateCcw size={14} />
-                Undo
-              </button>
-            )}
-            {/* Fork button — branch conversation */}
-            {sessionId && !isStreaming && (
-              <button
-                onClick={forkSession}
-                title="Fork this conversation"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors"
-              >
-                <GitBranch size={14} />
-                Fork
-              </button>
-            )}
             <button
               onClick={startNewConversation}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors"
@@ -994,28 +901,8 @@ export function ChatInterface({
       )}
 
       {/* Action bar — visible in embedded mode when session is active */}
-      {embedded && (sessionId || checkpointCount > 0) && !isStreaming && (
+      {embedded && sessionId && !isStreaming && (
         <div className="flex items-center justify-end gap-2 px-3 py-1.5 border-b border-border bg-card/50 shrink-0">
-          {checkpointCount > 0 && (
-            <button
-              onClick={rewindFiles}
-              title={`Undo last change (${checkpointCount} checkpoint${checkpointCount !== 1 ? "s" : ""})`}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-amber-500 hover:text-amber-400 border border-amber-500/30 rounded-md hover:bg-amber-500/10 transition-colors"
-            >
-              <RotateCcw size={13} />
-              Undo
-            </button>
-          )}
-          {sessionId && (
-            <button
-              onClick={forkSession}
-              title="Fork this conversation"
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-muted hover:text-foreground border border-border rounded-md hover:bg-card transition-colors"
-            >
-              <GitBranch size={13} />
-              Fork
-            </button>
-          )}
           {sessionId && (
             <button
               onClick={startNewConversation}

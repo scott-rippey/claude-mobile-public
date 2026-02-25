@@ -35,12 +35,11 @@ Phone → Vercel (Next.js + Google Auth)
   - `/api/chat/thinking` — set thinking budget via `response.setMaxThinkingTokens()`
   - `/api/chat/settings` — update session settings (budgetCapUsd, maxTurns, maxThinkingTokens)
   - `/api/chat/mcp-servers` — dynamic MCP server management via `response.setMcpServers()`
-  - `/api/chat/rewind` — rewind files to a checkpoint via `response.rewindFiles()`
   - `/api/chat/status` — lightweight query status check
   - `/api/chat/reconnect` (SSE) — replay + subscribe to running query
   - `/api/terminal` (SSE streaming), `/api/terminal/status`, `/api/terminal/reconnect` (SSE)
 - **Claude Agent SDK** integration for chat with `settingSources: ["project", "user"]` and `includePartialMessages: true` for token-by-token streaming
-- **SDK features used:** `enableFileCheckpointing`, `maxBudgetUsd`, `maxTurns`, `maxThinkingTokens`, `forkSession`, `continue`, `outputFormat`, `bypassPermissions`, `hooks` (PreToolUse, PostToolUse), `accountInfo()`, `supportedModels()`, `mcpServerStatus()`, `interrupt()`, `setModel()`, `setMaxThinkingTokens()`, `setMcpServers()`, `setPermissionMode()`, `rewindFiles()`
+- **SDK features used:** `enableFileCheckpointing`, `maxBudgetUsd`, `maxTurns`, `maxThinkingTokens`, `continue`, `outputFormat`, `bypassPermissions`, `hooks` (PreToolUse, PostToolUse), `accountInfo()`, `supportedModels()`, `mcpServerStatus()`, `interrupt()`, `setModel()`, `setMaxThinkingTokens()`, `setMcpServers()`, `setPermissionMode()`
 - **Built-in slash commands** (`/help`, `/context`, `/model`, `/mcp`, `/status`, `/clear`) handled server-side without calling SDK — instant responses
 - **Custom .md commands** expanded from `.claude/commands/`, `~/.claude/commands/`, or global `slash commands/` folder
 - **Session persistence** via `session-store.ts` — debounced disk writes, loaded on startup, SIGTERM/SIGINT flush
@@ -112,8 +111,3 @@ If the local build hangs (which sometimes happens with Next.js), skip the build 
 - `PORT` — defaults to 3020
 - `TUNNEL_TOKEN` — Cloudflare tunnel token (used by `Start CC Server.command`)
 
-## Version History
-
-- **v1.2.0** — SDK feature expansion: query controls (budget, turns, continue), account info, mid-query controls (model switch, thinking budget, dynamic MCP), session features (fork, file checkpointing, graceful interrupt), hooks, bypass permissions, ChatSettings UI, structured output support
-- **v1.1.0** — Session persistence, graceful interrupt UI, file checkpointing UI
-- **v1.0.0** — Initial release: chat, file browsing, terminal, permissions, reconnection
