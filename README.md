@@ -12,7 +12,6 @@ A mobile-friendly web interface for [Claude Code](https://docs.anthropic.com/en/
 - **Permission Modes** — Default, Accept Edits, Plan, and Bypass mode switchable mid-conversation (60s timeout with 45s warning)
 - **Cost & Turn Limits** — set per-session budget caps ($1/$5/$25) and turn limits (5/10/25) via expandable settings panel
 - **Mid-Query Controls** — switch models, adjust thinking budget, and manage MCP servers during active queries
-- **Session Fork** — branch a conversation without affecting the original, with lineage tracking
 - **Slash Commands** — built-in (`/help`, `/model`, `/status`, `/compact`, `/clear`) plus your existing custom `.md` commands
 - **MCP Servers** — loads your configured MCP servers from project/user settings, plus [Context7](https://github.com/upstash/context7) for up-to-date library docs. Dynamic add/remove via API.
 - **Context Tracking** — live context usage bar with real-time token updates and session cost display
@@ -20,7 +19,6 @@ A mobile-friendly web interface for [Claude Code](https://docs.anthropic.com/en/
 - **Mobile-First** — designed for phone screens with touch-friendly controls
 - **Session Persistence** — sessions survive server restarts via debounced disk writes. Tracks model, cost, context usage per session. 24h TTL with auto-cleanup.
 - **Graceful Interrupt** — first tap sends `response.interrupt()` (Claude finishes current thought), second tap within 3s forces a hard abort. Visual "Interrupting..." feedback.
-- **File Checkpointing + Undo** — `enableFileCheckpointing` tracks file changes during chat. One-tap "Undo" button calls `response.rewindFiles()` to restore files to any previous checkpoint.
 - **Tool Hooks** — informational PreToolUse/PostToolUse hooks forward tool audit events to the client
 - **Structured Output** — pass `outputFormat` with JSON schema for structured responses
 - **Session Recovery** — `options.continue` auto-resumes most recent conversation when session is lost
@@ -54,8 +52,8 @@ Phone (browser)
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/scott-rippey/claude-mobile-public.git
-cd claude-mobile-public
+git clone https://github.com/scott-rippey/code-anvil-mobile-public.git
+cd code-anvil-mobile-public
 
 # Install frontend dependencies
 npm install
@@ -304,8 +302,8 @@ lsof -ti :3020 | xargs kill
 
 ## Version History
 
-- **v1.2.0** — SDK feature expansion: query controls (budget caps, turn limits, continue), account info, mid-query controls (model switch, thinking budget, dynamic MCP), session features (fork, file checkpointing backend, graceful interrupt backend), informational hooks, bypass permissions mode, ChatSettings UI panel, structured output support, session recovery. 171 tests passing.
-- **v1.1.0** — Session persistence (survives server restarts), graceful interrupt (two-tap stop with visual feedback), file checkpointing + undo (rewind Claude's file changes). Added Vitest test suite (43 tests for new features). QueryRunner/TerminalRunner decoupled from SSE connections for reconnect support.
+- **v1.2.0** — SDK feature expansion: query controls (budget caps, turn limits, continue), account info, mid-query controls (model switch, thinking budget, dynamic MCP), graceful interrupt, informational hooks, bypass permissions mode, ChatSettings UI panel, structured output support, session recovery, file browser refresh. Rebranded to Code Anvil Mobile. Removed fork/undo UI (SDK limitations). 171 tests passing.
+- **v1.1.0** — Session persistence (survives server restarts), graceful interrupt (two-tap stop with visual feedback). Added Vitest test suite (43 tests for new features). QueryRunner/TerminalRunner decoupled from SSE connections for reconnect support.
 - **v1.0.1** — Improved README for public release: cross-platform setup (Mac/Linux/WSL), security considerations, troubleshooting guide, local dev instructions. Fixed localhost port fallback bug.
 - **v1.0.0** — Initial public release. Chat, file browser, terminal, permission modes, slash commands, MCP servers, context tracking.
 
